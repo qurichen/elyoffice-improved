@@ -1,0 +1,469 @@
+LOK: Impress slide objects, guides and pictures without dialogs
+
+- .uno:SlideObjects reads the shown slide: objects in z order (kind, frame,
+  placeholder role, lock, selected; comments, which 26.2 keeps as
+  objects, are left out), the selection (kind, fill, outline,
+  transparency, shadow, autofit, frame, rotation and its centre, locks,
+  group and ungroup), snapping, and guides. .uno:SlideDesign reads the
+  current view too.
+- .uno:SelectObject takes Index (and Add) to mark an object by z order,
+  comments not counted, as in .uno:SlideObjects; Add without Index
+  unmarks all.
+- .uno:CapturePoint takes Kind, X, Y to add a guide, or Index with X, Y
+  or Delete to move or remove one; LOK has no snap line dialog.
+- .uno:TransformDialog takes ProtectPos and ProtectSize.
+- .uno:TextAutoFitToSize takes Fit (off, shrink, grow) for every marked
+  object in one step, both growths set and the text kept for undo;
+  the toggle acted on one object only.
+- .uno:ChangePicture takes FileName and replaces the selected picture.
+- Under LOK an inserted picture lands at the slide centre; the window
+  area it used means nothing there.
+
+diff --git a/sd/sdi/sdraw.sdi b/sd/sdi/sdraw.sdi
+index 38859c6..ccc665d 100644
+--- a/sd/sdi/sdraw.sdi
++++ b/sd/sdi/sdraw.sdi
+@@ -244,7 +244,7 @@ SfxVoidItem Break SID_BREAK
+ ]
+ 
+ SfxVoidItem CapturePoint SID_CAPTUREPOINT
+-()
++(SfxUInt32Item Index ID_VAL_INDEX, SfxUInt16Item Kind FN_PARAM_1, SfxInt32Item X FN_PARAM_2, SfxInt32Item Y FN_PARAM_3, SfxBoolItem Delete FN_PARAM_4)
+ [
+     AutoUpdate = FALSE,
+     FastCall = FALSE,
+@@ -3314,7 +3314,7 @@ SfxBoolItem TextFitToSizeTool SID_TEXT_FITTOSIZE
+ ]
+ 
+ SfxBoolItem TextAutoFitToSize SID_OUTLINE_TEXT_AUTOFIT
+-
++(SfxStringItem Fit FN_PARAM_1)
+ [
+     AutoUpdate = TRUE,
+     FastCall = FALSE,
+diff --git a/sd/source/ui/func/fuinsert.cxx b/sd/source/ui/func/fuinsert.cxx
+index 7bab8d8..bbe3705 100644
+--- a/sd/source/ui/func/fuinsert.cxx
++++ b/sd/source/ui/func/fuinsert.cxx
+@@ -181,7 +181,10 @@ void FuInsertGraphic::DoExecute( SfxRequest& rReq )
+                     nAction = DND_ACTION_LINK;
+             }
+ 
+-            Point aPos = mpWindow->GetVisibleCenter();
++            // LOK's window area means nothing; use the slide.
++            Point aPos = comphelper::LibreOfficeKit::isActive()
++                ? ::tools::Rectangle(Point(), mpView->GetSdrPageView()->GetPage()->GetSize()).Center()
++                : mpWindow->GetVisibleCenter();
+             SdrGrafObj* pGrafObj = mpView->InsertGraphic(aGraphic, nAction, aPos, pPickObj, nullptr);
+ 
+             if(pGrafObj && bAsLink )
+diff --git a/sd/source/ui/func/fusnapln.cxx b/sd/source/ui/func/fusnapln.cxx
+index 33a2690..7c0cfe9 100644
+--- a/sd/source/ui/func/fusnapln.cxx
++++ b/sd/source/ui/func/fusnapln.cxx
+@@ -18,6 +18,8 @@
+  */
+ 
+ #include <fusnapln.hxx>
++#include <comphelper/lok.hxx>
++#include <svl/eitem.hxx>
+ #include <svl/intitem.hxx>
+ #include <sfx2/request.hxx>
+ #include <svx/svxids.hrc>
+@@ -58,6 +60,12 @@ void FuSnapLine::DoExecute( SfxRequest& rReq )
+ 
+     // Get index of snap line or snap point from the request.
+     const SfxUInt32Item* pHelpLineIndex = rReq.GetArg(ID_VAL_INDEX);
++    SdrPageView* pPV = mpView->GetSdrPageView();
++    if (comphelper::LibreOfficeKit::isActive() && pArgs)
++    {
++        DoLokExecute(rReq, pHelpLineIndex, *pPV);
++        return;
++    }
+     if (pHelpLineIndex != nullptr)
+     {
+         nHelpLine = static_cast<sal_uInt16>(pHelpLineIndex->GetValue());
+@@ -65,8 +73,6 @@ void FuSnapLine::DoExecute( SfxRequest& rReq )
+         pArgs = nullptr;
+     }
+ 
+-    SdrPageView* pPV = mpView->GetSdrPageView();
+-
+     if (!pArgs)
+     {
+         SfxItemSetFixed<ATTR_SNAPLINE_START, ATTR_SNAPLINE_END> aNewAttr(mrViewShell.GetPool());
+@@ -182,6 +188,43 @@ void FuSnapLine::DoExecute( SfxRequest& rReq )
+     }
+ }
+ 
++// LOK adds, moves or deletes a guide without the dialog.
++void FuSnapLine::DoLokExecute(SfxRequest& rReq, const SfxUInt32Item* pIndex, SdrPageView& rPV)
++{
++    const SfxUInt16Item* pKind = rReq.GetArg<SfxUInt16Item>(FN_PARAM_1);
++    const SfxInt32Item* pX = rReq.GetArg<SfxInt32Item>(FN_PARAM_2);
++    const SfxInt32Item* pY = rReq.GetArg<SfxInt32Item>(FN_PARAM_3);
++    const SfxBoolItem* pDelete = rReq.GetArg<SfxBoolItem>(FN_PARAM_4);
++    const SdrHelpLineList& rLines = rPV.GetHelpLines();
++    if (pIndex && pIndex->GetValue() >= rLines.GetCount())
++        return;
++    if (pIndex && pDelete && pDelete->GetValue())
++    {
++        rPV.DeleteHelpLine(pIndex->GetValue());
++        rReq.Done();
++        return;
++    }
++    if (!pX || !pY || (!pIndex && !pKind))
++        return;
++    Point aPos(pX->GetValue(), pY->GetValue());
++    rPV.PagePosToLogic(aPos);
++    if (pIndex)
++    {
++        const sal_uInt16 nLine = pIndex->GetValue();
++        rPV.SetHelpLine(nLine, SdrHelpLine(rLines[nLine].GetKind(), aPos));
++    }
++    else
++    {
++        SdrHelpLineKind eKind = SdrHelpLineKind::Point;
++        if (static_cast<SnapKind>(pKind->GetValue()) == SnapKind::Horizontal)
++            eKind = SdrHelpLineKind::Horizontal;
++        else if (static_cast<SnapKind>(pKind->GetValue()) == SnapKind::Vertical)
++            eKind = SdrHelpLineKind::Vertical;
++        rPV.InsertHelpLine(SdrHelpLine(eKind, aPos));
++    }
++    rReq.Done();
++}
++
+ void FuSnapLine::Activate()
+ {
+ }
+diff --git a/sd/source/ui/inc/fusnapln.hxx b/sd/source/ui/inc/fusnapln.hxx
+index 20ebf94..a9dc82a 100644
+--- a/sd/source/ui/inc/fusnapln.hxx
++++ b/sd/source/ui/inc/fusnapln.hxx
+@@ -21,6 +21,9 @@
+ 
+ #include "fupoor.hxx"
+ 
++class SfxUInt32Item;
++class SdrPageView;
++
+ namespace sd {
+ 
+ class FuSnapLine final
+@@ -35,6 +38,8 @@ public:
+     virtual void DoExecute( SfxRequest& rReq ) override;
+ 
+ private:
++    void DoLokExecute(SfxRequest& rReq, const SfxUInt32Item* pIndex, SdrPageView& rPV);
++
+     FuSnapLine (
+         ViewShell& rViewSh,
+         ::sd::Window* pWin,
+diff --git a/sd/source/ui/unoidl/unomodel.cxx b/sd/source/ui/unoidl/unomodel.cxx
+index d86deef..488eb85 100644
+--- a/sd/source/ui/unoidl/unomodel.cxx
++++ b/sd/source/ui/unoidl/unomodel.cxx
+@@ -109,6 +109,19 @@
+ #include <toolkit/awt/vclxdevice.hxx>
+ #include <svx/svdpool.hxx>
+ #include <svx/svdpagv.hxx>
++#include <svx/svdoole2.hxx>
++#include <svx/xflclit.hxx>
++#include <svx/xfillit0.hxx>
++#include <svx/xlineit0.hxx>
++#include <svx/xlnclit.hxx>
++#include <svx/xlnwtit.hxx>
++#include <svx/xfltrit.hxx>
++#include <svx/sdtfsitm.hxx>
++#include <svx/sdtagitm.hxx>
++#include <svx/sdshitm.hxx>
++#include <svx/svdhlpln.hxx>
++#include <svx/sdangitm.hxx>
++#include <svx/svxids.hrc>
+ #include <svtools/unoimap.hxx>
+ #include <svx/unoshape.hxx>
+ #include <editeng/unonrule.hxx>
+@@ -2047,7 +2060,7 @@ void SdXImpressDocument::Notify( SfxBroadcaster& rBC, const SfxHint& rHint )
+ 
+ bool SdXImpressDocument::supportsCommand(std::u16string_view rCommand)
+ {
+-    return rCommand == u"SlideDesign";
++    return rCommand == u"SlideDesign" || rCommand == u"SlideObjects";
+ }
+ 
+ namespace
+@@ -2072,6 +2085,157 @@ void lcl_SlideDesign(::tools::JsonWriter& rJson, SdDrawDocument& rDoc, sd::DrawV
+     for (const model::ColorSet& rSet : svx::ColorSets::get().getColorSetVector())
+         rJson.putSimpleValue(rSet.getName());
+ }
++
++/// What an object is, as Ely names it.
++std::string_view lcl_ObjectKind(const SdrObject& rObj)
++{
++    if (rObj.GetObjInventor() != SdrInventor::Default)
++        return "other";
++    switch (rObj.GetObjIdentifier())
++    {
++        case SdrObjKind::Group: return "group";
++        case SdrObjKind::Line:
++        case SdrObjKind::PolyLine:
++        case SdrObjKind::PathLine:
++        case SdrObjKind::FreehandLine:
++        case SdrObjKind::Measure: return "line";
++        case SdrObjKind::Edge: return "connector";
++        case SdrObjKind::Graphic: return "image";
++        case SdrObjKind::Table: return "table";
++        case SdrObjKind::OLE2:
++            return static_cast<const SdrOle2Obj&>(rObj).IsChart() ? "chart" : "object";
++        case SdrObjKind::Media: return "media";
++        case SdrObjKind::Text:
++        case SdrObjKind::TitleText:
++        case SdrObjKind::OutlineText: return "text";
++        default: return "shape";
++    }
++}
++
++/// A placeholder's role; empty for none.
++std::string_view lcl_Placeholder(PresObjKind eKind)
++{
++    switch (eKind)
++    {
++        case PresObjKind::NONE: return "";
++        case PresObjKind::Title: return "title";
++        case PresObjKind::Outline:
++        case PresObjKind::Text: return "body";
++        default: return "other";
++    }
++}
++
++/// A color, `-1` for none, `-2` for mixed.
++sal_Int32 lcl_Color(const SfxItemSet& rAttr, sal_uInt16 nStyle, sal_uInt16 nColor, bool bLine)
++{
++    if (rAttr.GetItemState(nStyle) == SfxItemState::INVALID)
++        return -2;
++    const bool bNone = bLine
++        ? rAttr.Get(XATTR_LINESTYLE).GetValue() == css::drawing::LineStyle_NONE
++        : rAttr.Get(XATTR_FILLSTYLE).GetValue() != css::drawing::FillStyle_SOLID;
++    if (bNone)
++        return -1;
++    if (rAttr.GetItemState(nColor) == SfxItemState::INVALID)
++        return -2;
++    return sal_Int32(static_cast<const XColorItem&>(rAttr.Get(nColor)).GetColorValue().GetRGBColor());
++}
++
++/// A flag: `0`, `1`, or `-2` for mixed.
++sal_Int32 lcl_Flag(const SfxItemSet& rAttr, sal_uInt16 nWhich)
++{
++    if (rAttr.GetItemState(nWhich) == SfxItemState::INVALID)
++        return -2;
++    return static_cast<const SfxBoolItem&>(rAttr.Get(nWhich)).GetValue() ? 1 : 0;
++}
++
++/// The marked objects' kind, look and geometry.
++void lcl_Selection(::tools::JsonWriter& rJson, sd::View& rView)
++{
++    const SdrMarkList& rMarks = rView.GetMarkedObjectList();
++    auto aNode = rJson.startNode("selection");
++    rJson.put("count", static_cast<sal_Int32>(rMarks.GetMarkCount()));
++    if (!rMarks.GetMarkCount())
++        return;
++    std::string_view aKind = lcl_ObjectKind(*rMarks.GetMark(0)->GetMarkedSdrObj());
++    for (size_t i = 1; i < rMarks.GetMarkCount(); ++i)
++        if (lcl_ObjectKind(*rMarks.GetMark(i)->GetMarkedSdrObj()) != aKind)
++            aKind = "mixed";
++    rJson.put("kind", aKind);
++    rJson.put("canGroup", rView.IsGroupPossible());
++    rJson.put("canUngroup", rView.IsUnGroupPossible());
++    const SfxItemSet aAttr(rView.GetAttrFromMarked(false));
++    rJson.put("fill", lcl_Color(aAttr, XATTR_FILLSTYLE, XATTR_FILLCOLOR, false));
++    rJson.put("line", lcl_Color(aAttr, XATTR_LINESTYLE, XATTR_LINECOLOR, true));
++    rJson.put("lineWidth", aAttr.GetItemState(XATTR_LINEWIDTH) == SfxItemState::INVALID
++        ? sal_Int32(-2) : sal_Int32(aAttr.Get(XATTR_LINEWIDTH).GetValue()));
++    rJson.put("transparency", aAttr.GetItemState(XATTR_FILLTRANSPARENCE) == SfxItemState::INVALID
++        ? sal_Int32(-2) : sal_Int32(aAttr.Get(XATTR_FILLTRANSPARENCE).GetValue()));
++    rJson.put("shadow", lcl_Flag(aAttr, SDRATTR_SHADOW));
++    std::string_view aFit = "mixed";
++    if (aAttr.GetItemState(SDRATTR_TEXT_FITTOSIZE) != SfxItemState::INVALID
++        && aAttr.GetItemState(SDRATTR_TEXT_AUTOGROWHEIGHT) != SfxItemState::INVALID)
++    {
++        aFit = aAttr.Get(SDRATTR_TEXT_FITTOSIZE).GetValue() == css::drawing::TextFitToSizeType_AUTOFIT
++            ? "shrink" : aAttr.Get(SDRATTR_TEXT_AUTOGROWHEIGHT).GetValue() ? "grow" : "off";
++    }
++    rJson.put("autofit", aFit);
++    const SfxItemSet aGeo(rView.GetGeoAttrFromMarked());
++    rJson.put("x", aGeo.Get(SID_ATTR_TRANSFORM_POS_X).GetValue());
++    rJson.put("y", aGeo.Get(SID_ATTR_TRANSFORM_POS_Y).GetValue());
++    rJson.put("width", sal_Int64(aGeo.Get(SID_ATTR_TRANSFORM_WIDTH).GetValue()));
++    rJson.put("height", sal_Int64(aGeo.Get(SID_ATTR_TRANSFORM_HEIGHT).GetValue()));
++    rJson.put("rotation", sal_Int32(aGeo.Get(SID_ATTR_TRANSFORM_ANGLE).GetValue().get()));
++    rJson.put("rotationX", aGeo.Get(SID_ATTR_TRANSFORM_ROT_X).GetValue());
++    rJson.put("rotationY", aGeo.Get(SID_ATTR_TRANSFORM_ROT_Y).GetValue());
++    rJson.put("lockPosition", lcl_Flag(aGeo, SID_ATTR_TRANSFORM_PROTECT_POS));
++    rJson.put("lockSize", lcl_Flag(aGeo, SID_ATTR_TRANSFORM_PROTECT_SIZE));
++}
++
++/// The shown slide's objects, selection, guides and snapping.
++void lcl_SlideObjects(::tools::JsonWriter& rJson, sd::DrawViewShell& rShell)
++{
++    sd::View& rView = *rShell.GetView();
++    SdrPageView* pPV = rView.GetSdrPageView();
++    SdPage* pPage = rShell.GetActualPage();
++    const SdrMarkList& rMarks = rView.GetMarkedObjectList();
++    {
++        auto aObjects = rJson.startArray("objects");
++        for (const rtl::Reference<SdrObject>& pObj : *pPage)
++        {
++            // Comments have their own list.
++            if (pObj->isAnnotationObject())
++                continue;
++            auto aObject = rJson.startStruct();
++            ::tools::Rectangle aRect(pObj->GetSnapRect());
++            pPV->LogicToPagePos(aRect);
++            rJson.put("name", pObj->GetName());
++            rJson.put("kind", lcl_ObjectKind(*pObj));
++            rJson.put("placeholder", lcl_Placeholder(pPage->GetPresObjKind(pObj.get())));
++            rJson.put("x", sal_Int64(aRect.Left()));
++            rJson.put("y", sal_Int64(aRect.Top()));
++            rJson.put("width", sal_Int64(aRect.GetWidth()));
++            rJson.put("height", sal_Int64(aRect.GetHeight()));
++            rJson.put("locked", pObj->IsMoveProtect());
++            rJson.put("selected", rMarks.FindObject(pObj.get()) != SAL_MAX_SIZE);
++        }
++    }
++    lcl_Selection(rJson, rView);
++    rJson.put("snapGrid", rView.IsGridSnap());
++    rJson.put("snapGuides", rView.IsHlplSnap());
++    auto aGuides = rJson.startArray("guides");
++    const SdrHelpLineList& rLines = pPV->GetHelpLines();
++    for (sal_uInt16 i = 0; i < rLines.GetCount(); ++i)
++    {
++        auto aGuide = rJson.startStruct();
++        Point aPos(rLines[i].GetPos());
++        pPV->LogicToPagePos(aPos);
++        const SdrHelpLineKind eKind = rLines[i].GetKind();
++        rJson.put("kind", eKind == SdrHelpLineKind::Horizontal ? "horizontal"
++                          : eKind == SdrHelpLineKind::Vertical ? "vertical" : "point");
++        rJson.put("x", sal_Int64(aPos.X()));
++        rJson.put("y", sal_Int64(aPos.Y()));
++    }
++}
+ }
+ 
+ void SdXImpressDocument::getCommandValues(::tools::JsonWriter& rJsonWriter, std::string_view rCommand)
+@@ -2079,10 +2240,16 @@ void SdXImpressDocument::getCommandValues(::tools::JsonWriter& rJsonWriter, std:
+     static constexpr OStringLiteral aExtractDocStructure(".uno:ExtractDocumentStructure");
+     if (rCommand == ".uno:SlideDesign")
+     {
+-        if (auto pShell = dynamic_cast<sd::DrawViewShell*>(mpDocShell->GetViewShell()))
++        if (DrawViewShell* pShell = GetViewShell())
+             lcl_SlideDesign(rJsonWriter, *mpDoc, *pShell);
+         return;
+     }
++    if (rCommand == ".uno:SlideObjects")
++    {
++        if (DrawViewShell* pShell = GetViewShell())
++            lcl_SlideObjects(rJsonWriter, *pShell);
++        return;
++    }
+ 
+     std::map<OUString, OUString> aMap
+         = SfxLokHelper::parseCommandParameters(OUString::fromUtf8(rCommand));
+diff --git a/sd/source/ui/view/drviews2.cxx b/sd/source/ui/view/drviews2.cxx
+index b1f1461..d8b1015 100644
+--- a/sd/source/ui/view/drviews2.cxx
++++ b/sd/source/ui/view/drviews2.cxx
+@@ -1255,7 +1255,29 @@ void DrawViewShell::FuTemporary(SfxRequest& rReq)
+         case SID_OUTLINE_TEXT_AUTOFIT:
+         {
+             SfxUndoManager* pUndoManager = GetDocSh()->GetUndoManager();
+-            if( rMarkList.GetMarkCount() == 1 )
++            const SfxStringItem* pFit = rReq.GetArg<SfxStringItem>(FN_PARAM_1);
++            if (pFit && rMarkList.GetMarkCount() != 0)
++            {
++                // Fit: off, shrink or grow, for every marked object.
++                const OUString& rFit = pFit->GetValue();
++                if (rFit != "off" && rFit != "shrink" && rFit != "grow")
++                    break;
++                pUndoManager->EnterListAction(u""_ustr, u""_ustr, 0, GetViewShellBase().GetViewShellId());
++                mpDrawView->BegUndo();
++                for (size_t i = 0; i < rMarkList.GetMarkCount(); ++i)
++                {
++                    SdrObject* pObj = rMarkList.GetMark(i)->GetMarkedSdrObj();
++                    // The item change rewrites the text; undo keeps it.
++                    mpDrawView->AddUndo(GetDoc()->GetSdrUndoFactory().CreateUndoAttrObject(*pObj, false, true));
++                    pObj->SetMergedItem(SdrTextFitToSizeTypeItem(rFit == "shrink"
++                        ? drawing::TextFitToSizeType_AUTOFIT : drawing::TextFitToSizeType_NONE));
++                    pObj->SetMergedItem(makeSdrTextAutoGrowHeightItem(rFit == "grow"));
++                    pObj->SetMergedItem(makeSdrTextAutoGrowWidthItem(false));
++                }
++                mpDrawView->EndUndo();
++                pUndoManager->LeaveListAction();
++            }
++            else if( rMarkList.GetMarkCount() == 1 )
+             {
+                 pUndoManager->EnterListAction(u""_ustr, u""_ustr, 0, GetViewShellBase().GetViewShellId());
+                 mpDrawView->BegUndo();
+diff --git a/sd/source/ui/view/drviewse.cxx b/sd/source/ui/view/drviewse.cxx
+index 5d94d13..103534c 100644
+--- a/sd/source/ui/view/drviewse.cxx
++++ b/sd/source/ui/view/drviewse.cxx
+@@ -156,6 +156,28 @@ void DrawViewShell::FuPermanent(SfxRequest& rReq)
+ 
+     sal_uInt16 nSId = rReq.GetSlot();
+ 
++    // LOK picks by place; Add alone picks none.
++    const SfxUInt32Item* pIndex = rReq.GetArg(ID_VAL_INDEX);
++    const SfxBoolItem* pAdd = rReq.GetArg<SfxBoolItem>(FN_PARAM_1);
++    if (nSId == SID_OBJECT_SELECT && (pIndex || pAdd) && comphelper::LibreOfficeKit::isActive())
++    {
++        // Comments are not counted, as in .uno:SlideObjects.
++        std::vector<SdrObject*> aShapes;
++        for (const rtl::Reference<SdrObject>& pObj : *getCurrentPage())
++            if (!pObj->isAnnotationObject())
++                aShapes.push_back(pObj.get());
++        if (pIndex && pIndex->GetValue() >= aShapes.size())
++            return;
++        if (mpDrawView->IsTextEdit())
++            mpDrawView->SdrEndTextEdit();
++        if (!pAdd || !pAdd->GetValue())
++            mpDrawView->UnmarkAllObj();
++        if (pIndex)
++            mpDrawView->MarkObj(aShapes[pIndex->GetValue()], mpDrawView->GetSdrPageView());
++        rReq.Done();
++        return;
++    }
++
+     if( HasCurrentFunction() &&
+         ( nSId == SID_TEXTEDIT || nSId == SID_ATTR_CHAR || nSId == SID_TEXT_FITTOSIZE ||
+           nSId == SID_ATTR_CHAR_VERTICAL || nSId == SID_TEXT_FITTOSIZE_VERTICAL ) )
+diff --git a/svx/sdi/svx.sdi b/svx/sdi/svx.sdi
+index 2cc2a87..9921969 100644
+--- a/svx/sdi/svx.sdi
++++ b/svx/sdi/svx.sdi
+@@ -4579,7 +4579,7 @@ SfxBoolItem Crop SID_OBJECT_CROP
+ ]
+ 
+ SfxVoidItem ChangePicture SID_CHANGE_PICTURE
+-()
++(SfxStringItem FileName SID_INSERT_GRAPHIC)
+ [
+     AutoUpdate = FALSE,
+     FastCall = FALSE,
+@@ -8923,7 +8923,7 @@ SfxBoolItem ToolEdit SID_TEXTEDIT
+ 
+ 
+ SfxBoolItem SelectObject SID_OBJECT_SELECT
+-
++(SfxUInt32Item Index ID_VAL_INDEX, SfxBoolItem Add FN_PARAM_1)
+ [
+     AutoUpdate = TRUE,
+     FastCall = FALSE,
+@@ -8961,7 +8961,7 @@ SvxULSpaceItem TopBottomMargin SID_ATTR_ULSPACE
+ 
+ 
+ SfxVoidItem TransformDialog SID_ATTR_TRANSFORM
+-(SfxInt32Item TransformPosX SID_ATTR_TRANSFORM_POS_X, SfxInt32Item TransformPosY SID_ATTR_TRANSFORM_POS_Y, SfxUInt32Item TransformWidth SID_ATTR_TRANSFORM_WIDTH, SfxUInt32Item TransformHeight SID_ATTR_TRANSFORM_HEIGHT, SdrAngleItem TransformRotationDeltaAngle SID_ATTR_TRANSFORM_DELTA_ANGLE, SdrAngleItem TransformRotationAngle SID_ATTR_TRANSFORM_ANGLE, SfxInt32Item TransformRotationX SID_ATTR_TRANSFORM_ROT_X, SfxInt32Item TransformRotationY SID_ATTR_TRANSFORM_ROT_Y)
++(SfxInt32Item TransformPosX SID_ATTR_TRANSFORM_POS_X, SfxInt32Item TransformPosY SID_ATTR_TRANSFORM_POS_Y, SfxUInt32Item TransformWidth SID_ATTR_TRANSFORM_WIDTH, SfxUInt32Item TransformHeight SID_ATTR_TRANSFORM_HEIGHT, SdrAngleItem TransformRotationDeltaAngle SID_ATTR_TRANSFORM_DELTA_ANGLE, SdrAngleItem TransformRotationAngle SID_ATTR_TRANSFORM_ANGLE, SfxInt32Item TransformRotationX SID_ATTR_TRANSFORM_ROT_X, SfxInt32Item TransformRotationY SID_ATTR_TRANSFORM_ROT_Y, SfxBoolItem ProtectPos SID_ATTR_TRANSFORM_PROTECT_POS, SfxBoolItem ProtectSize SID_ATTR_TRANSFORM_PROTECT_SIZE)
+ [
+     AutoUpdate = FALSE,
+     FastCall = TRUE,

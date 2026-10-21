@@ -1,0 +1,67 @@
+LOK: Impress slide layers render on macOS
+
+SlideshowLayerRenderer painted into the client's buffer, which Aqua
+devices cannot do: every layer came back empty. On macOS paint into an
+alpha device of its own and copy the pixels out, as tile painting does.
+
+diff --git a/sd/source/ui/tools/SlideshowLayerRenderer.cxx b/sd/source/ui/tools/SlideshowLayerRenderer.cxx
+index 8675630..7ecd4ad 100644
+--- a/sd/source/ui/tools/SlideshowLayerRenderer.cxx
++++ b/sd/source/ui/tools/SlideshowLayerRenderer.cxx
+@@ -23,6 +23,7 @@
+ #include <svx/xflclit.hxx>
+ #include <svx/xlnclit.hxx>
+ 
++#include <vcl/BitmapTools.hxx>
+ #include <vcl/virdev.hxx>
+ #include <tools/json_writer.hxx>
+ #include <editeng/editeng.hxx>
+@@ -87,6 +88,10 @@ private:
+ 
+     EEControlBits mnSavedControlBits;
+     Color maSavedBackgroundColor;
++#if defined(MACOSX)
++    unsigned char* mpBuffer;
++    Size maBufferSize;
++#endif
+ 
+ public:
+     ScopedVclPtrInstance<VirtualDevice> maVirtualDevice;
+@@ -98,6 +103,10 @@ public:
+         , maVirtualDevice(
+               CoreGraphics::getiOSGraphicsData(pBuffer, rSlideSize.Width(), rSlideSize.Height()),
+               Size(1, 1), DeviceFormat::WITHOUT_ALPHA)
++#elif defined(MACOSX)
++        , mpBuffer(pBuffer)
++        , maBufferSize(rSlideSize)
++        , maVirtualDevice(DeviceFormat::WITH_ALPHA)
+ #else
+         , maVirtualDevice(DeviceFormat::WITHOUT_ALPHA)
+ #endif
+@@ -114,8 +123,14 @@ public:
+ 
+         maVirtualDevice->SetBackground(Wallpaper(COL_TRANSPARENT));
+ 
++#if defined(MACOSX)
++        // Aqua devices cannot paint client buffers: paint, then copy.
++        (void)rScale;
++        maVirtualDevice->SetOutputSizePixel(rSlideSize);
++#else
+         maVirtualDevice->SetOutputSizePixelScaleOffsetAndLOKBuffer(rSlideSize, rScale, Point(),
+                                                                    pBuffer);
++#endif
+         Size aPageSize(rPage.GetSize());
+ 
+         MapMode aMapMode(MapUnit::Map100thMM);
+@@ -139,6 +154,11 @@ public:
+ 
+ #ifdef IOS
+         CoreGraphics::CGContextRelease(maVirtualDevice->GetSystemGfxData().rCGContext);
++#endif
++#if defined(MACOSX)
++        maVirtualDevice->EnableMapMode(false);
++        vcl::bitmap::fillWithData(mpBuffer,
++                                  maVirtualDevice->GetBitmap(Point(), maBufferSize));
+ #endif
+     }
+ };

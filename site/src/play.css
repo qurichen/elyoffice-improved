@@ -1,0 +1,91 @@
+.play {
+  display: grid;
+  justify-items: center;
+  gap: 4rem;
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: 9rem 1.5rem;
+  text-align: center;
+}
+
+.play .board {
+  position: relative;
+  width: 100%;
+}
+
+.play .stage {
+  width: 100%;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.play .caption {
+  translate: -50% -100%;
+}
+
+.play:hover .caption,
+.play:focus-within .caption {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .play .caption {
+    opacity: 1;
+  }
+}
+
+.file {
+  cursor: grab;
+  touch-action: none;
+  outline: none;
+}
+
+.file:active {
+  cursor: grabbing;
+}
+
+.file:focus-visible .face.outline {
+  stroke: #1d1d1f;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+:root[data-theme="dark"] .file:focus-visible .face.outline {
+  stroke: #f4f4f2;
+}
+
+.play .foot {
+  display: grid;
+  justify-items: center;
+  gap: 1.5rem;
+  min-height: 5.5rem;
+}
+
+.again {
+  padding: 0.5rem 0.75rem;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 1.0625rem;
+  color: var(--link);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease-out;
+}
+
+.play:hover .again,
+.again:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .again {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .again {
+    transition: none;
+  }
+}

@@ -1,0 +1,71 @@
+[package]
+name = "ely-platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+arboard.workspace = true
+directories.workspace = true
+ely-ipc.workspace = true
+env_logger.workspace = true
+futures.workspace = true
+getrandom.workspace = true
+image.workspace = true
+log.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+ureq.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+metal.workspace = true
+core-foundation.workspace = true
+core-video.workspace = true
+objc2-app-kit.workspace = true
+objc2-av-foundation.workspace = true
+objc2-core-foundation.workspace = true
+objc2-core-media.workspace = true
+objc2-core-video.workspace = true
+objc2-foundation.workspace = true
+objc2-pdf-kit.workspace = true
+objc2.workspace = true
+security-framework.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+windows.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+lopdf.workspace = true
+zbus.workspace = true
+rfd = { workspace = true, features = ["xdg-portal"] }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+rfd.workspace = true
+
+[dev-dependencies]
+lopdf.workspace = true
+tempfile.workspace = true
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc2-foundation.workspace = true
+
+[lints]
+workspace = true
+
+[[test]]
+name = "media"
+harness = false
+
+[[test]]
+name = "print"
+harness = false

@@ -1,0 +1,46 @@
+[package]
+name = "ely-lok"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+dunce.workspace = true
+ely-ipc.workspace = true
+base64.workspace = true
+serde_json.workspace = true
+env_logger.workspace = true
+log.workspace = true
+gpui = { workspace = true, optional = true }
+ely-gpui-component = { workspace = true, optional = true }
+ely-platform = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+image.workspace = true
+
+[features]
+view = ["dep:gpui", "dep:ely-gpui-component", "dep:ely-platform", "dep:futures"]
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+ely-ui.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+ely-gpui-component = { workspace = true, features = ["test-support"] }
+
+[[example]]
+name = "lokview"
+required-features = ["view"]
+
+[[bin]]
+name = "ely-lok-worker"
+path = "src/bin/ely-lok-worker.rs"
+
+[lints]
+workspace = true

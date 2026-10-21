@@ -1,0 +1,280 @@
+svx: chart look helpers a kit client can drive
+
+ChartHelper gains IsChartLook, SetChartLook and WriteChartLook (type,
+titles, legend, as JSON), moved here from Calc so Impress can use them.
+The JSON keeps its types (boost.json): a field of the wrong type, such
+as a legend that is not true or false or a title that is not text, is
+refused before anything changes.
+A scatter starts as points only when the chart becomes one; a scatter
+kept as one keeps its lines.
+
+diff --git a/include/svx/charthelper.hxx b/include/svx/charthelper.hxx
+index 3ad1fba..9bdf0a6 100644
+--- a/include/svx/charthelper.hxx
++++ b/include/svx/charthelper.hxx
+@@ -31,6 +31,8 @@ namespace com::sun::star {
+ }
+ 
+ namespace basegfx { class B2DRange; }
++namespace tools { class JsonWriter; }
++namespace com::sun::star::uno { class XInterface; }
+ 
+ class SAL_WARN_UNUSED SVXCORE_DLLPUBLIC ChartHelper
+ {
+@@ -54,6 +56,13 @@ public:
+     // newly created charts using this method
+     static void AdaptDefaultsForChart(
+         const css::uno::Reference < css::embed::XEmbeddedObject > & xEmbObj);
++
++    /// A kit chart look: type, titles, legend, as JSON.
++    static bool IsChartLook(std::u16string_view rJson);
++    static bool SetChartLook(const css::uno::Reference<css::uno::XInterface>& xChart,
++                             std::u16string_view rJson);
++    static void WriteChartLook(::tools::JsonWriter& rJson,
++                               const css::uno::Reference<css::uno::XInterface>& xChart);
+ };
+ 
+ #endif // INCLUDED_SVX_CHARTHELPER_HXX
+diff --git a/svx/Library_svxcore.mk b/svx/Library_svxcore.mk
+index e2d178b..1dfa044 100644
+--- a/svx/Library_svxcore.mk
++++ b/svx/Library_svxcore.mk
+@@ -332,6 +332,7 @@ $(eval $(call gb_Library_add_exception_objects,svxcore,\
+     svx/source/sdr/properties/e3dcompoundproperties \
+     svx/source/sdr/properties/oleproperties \
+     svx/source/svdraw/charthelper \
++    svx/source/svdraw/chartlook \
+     svx/source/svdraw/constructhelper \
+     svx/source/svdraw/clonelist \
+     svx/source/svdraw/gradtrns \
+diff --git a/svx/source/svdraw/chartjson.hxx b/svx/source/svdraw/chartjson.hxx
+new file mode 100644
+index 0000000..d105464
+--- /dev/null
++++ b/svx/source/svdraw/chartjson.hxx
+@@ -0,0 +1,26 @@
++/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++/*
++ * This file is part of the LibreOffice project.
++ *
++ * This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
++ */
++
++#pragma once
++
++#include <rtl/ustring.hxx>
++#include <boost/json.hpp>
++
++#include <optional>
++#include <string_view>
++
++namespace svx::chartjson
++{
++/// The JSON object, or none if it is not one.
++std::optional<boost::json::object> Object(std::u16string_view rJson);
++/// Member `rKey` as text; absent is empty, another type fails.
++std::optional<OUString> Text(const boost::json::object& rObject, std::string_view rKey);
++}
++
++/* vim:set shiftwidth=4 softtabstop=4 expandtab: */
+diff --git a/svx/source/svdraw/chartlook.cxx b/svx/source/svdraw/chartlook.cxx
+new file mode 100644
+index 0000000..79d4e6c
+--- /dev/null
++++ b/svx/source/svdraw/chartlook.cxx
+@@ -0,0 +1,193 @@
++/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++/*
++ * This file is part of the LibreOffice project.
++ *
++ * This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
++ */
++
++#include <svx/charthelper.hxx>
++#include "chartjson.hxx"
++
++#include <com/sun/star/beans/XPropertySet.hpp>
++#include <com/sun/star/chart/XAxisXSupplier.hpp>
++#include <com/sun/star/chart/XAxisYSupplier.hpp>
++#include <com/sun/star/chart/XChartDocument.hpp>
++#include <com/sun/star/drawing/XShape.hpp>
++#include <com/sun/star/lang/XMultiServiceFactory.hpp>
++#include <tools/json_writer.hxx>
++// One translation unit builds boost.json.
++#include <boost/json/src.hpp>
++
++#include <algorithm>
++#include <functional>
++#include <optional>
++
++using namespace ::com::sun::star;
++
++namespace svx::chartjson
++{
++/// The JSON object, or none if it is not one.
++std::optional<boost::json::object> Object(std::u16string_view rJson)
++{
++    boost::system::error_code aError;
++    boost::json::value aValue = boost::json::parse(std::string(OUString(rJson).toUtf8()), aError);
++    if (aError || !aValue.is_object())
++        return std::nullopt;
++    return aValue.as_object();
++}
++
++/// Member `rKey` as text; absent is empty, another type fails.
++std::optional<OUString> Text(const boost::json::object& rObject, std::string_view rKey)
++{
++    const boost::json::value* pValue = rObject.if_contains(rKey);
++    if (!pValue)
++        return OUString();
++    if (!pValue->is_string())
++        return std::nullopt;
++    const boost::json::string& rText = pValue->as_string();
++    return OUString::fromUtf8(std::string_view(rText.data(), rText.size()));
++}
++}
++
++namespace
++{
++/// Kit names and the diagram services they map to.
++constexpr std::pair<std::string_view, std::u16string_view> aChartTypes[]
++    = { { "column", u"com.sun.star.chart.BarDiagram" },
++        { "bar", u"com.sun.star.chart.BarDiagram" },
++        { "line", u"com.sun.star.chart.LineDiagram" },
++        { "scatter", u"com.sun.star.chart.XYDiagram" },
++        { "pie", u"com.sun.star.chart.PieDiagram" } };
++
++/// A parsed look; "other" keeps the diagram.
++struct ChartLook
++{
++    std::string_view aType;
++    OUString aTitle, aXTitle, aYTitle;
++    bool bLegend = true;
++};
++
++std::optional<ChartLook> lcl_ParseLook(std::u16string_view rJson)
++{
++    const std::optional<boost::json::object> oObject = svx::chartjson::Object(rJson);
++    if (!oObject)
++        return std::nullopt;
++    const boost::json::value* pType = oObject->if_contains("type");
++    if (!pType || !pType->is_string())
++        return std::nullopt;
++    const std::string_view aType(pType->as_string().data(), pType->as_string().size());
++    ChartLook aLook;
++    if (aType == "other")
++        aLook.aType = "other";
++    for (const auto& [rName, rService] : aChartTypes)
++        if (rName == aType)
++            aLook.aType = rName;
++    const std::optional<OUString> oTitle = svx::chartjson::Text(*oObject, "title");
++    const std::optional<OUString> oXTitle = svx::chartjson::Text(*oObject, "xtitle");
++    const std::optional<OUString> oYTitle = svx::chartjson::Text(*oObject, "ytitle");
++    const boost::json::value* pLegend = oObject->if_contains("legend");
++    if (aLook.aType.empty() || !oTitle || !oXTitle || !oYTitle || (pLegend && !pLegend->is_bool()))
++        return std::nullopt;
++    aLook.aTitle = *oTitle;
++    aLook.aXTitle = *oXTitle;
++    aLook.aYTitle = *oYTitle;
++    aLook.bLegend = !pLegend || pLegend->as_bool();
++    return aLook;
++}
++
++/// Shows a title with this text; empty hides it.
++void lcl_SetTitle(const uno::Reference<beans::XPropertySet>& xOwner, const OUString& rHas,
++                  const std::function<uno::Reference<drawing::XShape>()>& rTitle,
++                  const OUString& rText)
++{
++    xOwner->setPropertyValue(rHas, uno::Any(!rText.isEmpty()));
++    if (rText.isEmpty())
++        return;
++    uno::Reference<beans::XPropertySet> xTitle(rTitle(), uno::UNO_QUERY_THROW);
++    xTitle->setPropertyValue(u"String"_ustr, uno::Any(rText));
++}
++
++OUString lcl_Title(const uno::Reference<beans::XPropertySet>& xOwner, const OUString& rHas,
++                   const std::function<uno::Reference<drawing::XShape>()>& rTitle)
++{
++    OUString aText;
++    if (!xOwner->getPropertyValue(rHas).get<bool>())
++        return aText;
++    uno::Reference<beans::XPropertySet> xTitle(rTitle(), uno::UNO_QUERY_THROW);
++    xTitle->getPropertyValue(u"String"_ustr) >>= aText;
++    return aText;
++}
++}
++
++bool ChartHelper::IsChartLook(std::u16string_view rJson) { return lcl_ParseLook(rJson).has_value(); }
++
++bool ChartHelper::SetChartLook(const uno::Reference<uno::XInterface>& xChart,
++                               std::u16string_view rJson)
++{
++    const std::optional<ChartLook> oLook = lcl_ParseLook(rJson);
++    uno::Reference<chart::XChartDocument> xDoc(xChart, uno::UNO_QUERY);
++    if (!oLook || !xDoc.is())
++        return false;
++    uno::Reference<chart::XDiagram> xDiagram = xDoc->getDiagram();
++    const auto pType = std::find_if(std::begin(aChartTypes), std::end(aChartTypes),
++                                    [&oLook](const auto& rPair) { return rPair.first == oLook->aType; });
++    if (pType != std::end(aChartTypes))
++    {
++        const bool bNewType = xDiagram->getDiagramType() != pType->second;
++        if (bNewType)
++        {
++            uno::Reference<lang::XMultiServiceFactory> xFactory(xDoc, uno::UNO_QUERY_THROW);
++            xDiagram.set(xFactory->createInstance(OUString(pType->second)), uno::UNO_QUERY_THROW);
++            xDoc->setDiagram(xDiagram);
++        }
++        uno::Reference<beans::XPropertySet> xProps(xDiagram, uno::UNO_QUERY_THROW);
++        if (pType->second == u"com.sun.star.chart.BarDiagram")
++            xProps->setPropertyValue(u"Vertical"_ustr, uno::Any(oLook->aType == "bar"));
++        // A new scatter starts as points; kept ones keep lines.
++        if (bNewType && oLook->aType == "scatter")
++            xProps->setPropertyValue(u"Lines"_ustr, uno::Any(false));
++    }
++    uno::Reference<beans::XPropertySet> xDocProps(xDoc, uno::UNO_QUERY_THROW);
++    lcl_SetTitle(xDocProps, u"HasMainTitle"_ustr, [&xDoc] { return xDoc->getTitle(); },
++                 oLook->aTitle);
++    xDocProps->setPropertyValue(u"HasLegend"_ustr, uno::Any(oLook->bLegend));
++    // A pie has no axes.
++    if (xDiagram->getDiagramType() == u"com.sun.star.chart.PieDiagram")
++        return true;
++    uno::Reference<chart::XAxisXSupplier> xX(xDiagram, uno::UNO_QUERY_THROW);
++    uno::Reference<chart::XAxisYSupplier> xY(xDiagram, uno::UNO_QUERY_THROW);
++    uno::Reference<beans::XPropertySet> xProps(xDiagram, uno::UNO_QUERY_THROW);
++    lcl_SetTitle(xProps, u"HasXAxisTitle"_ustr, [&xX] { return xX->getXAxisTitle(); },
++                 oLook->aXTitle);
++    lcl_SetTitle(xProps, u"HasYAxisTitle"_ustr, [&xY] { return xY->getYAxisTitle(); },
++                 oLook->aYTitle);
++    return true;
++}
++
++void ChartHelper::WriteChartLook(::tools::JsonWriter& rJson,
++                                 const uno::Reference<uno::XInterface>& xChart)
++{
++    uno::Reference<chart::XChartDocument> xDoc(xChart, uno::UNO_QUERY_THROW);
++    uno::Reference<chart::XDiagram> xDiagram = xDoc->getDiagram();
++    uno::Reference<beans::XPropertySet> xProps(xDiagram, uno::UNO_QUERY_THROW);
++    const OUString aService = xDiagram->getDiagramType();
++    std::string_view aType = "other";
++    for (const auto& [rName, rService] : aChartTypes)
++        if (rService == aService && aType == "other")
++            aType = rName;
++    if (aType == "column" && xProps->getPropertyValue(u"Vertical"_ustr).get<bool>())
++        aType = "bar";
++    rJson.put("type", aType);
++    uno::Reference<beans::XPropertySet> xDocProps(xDoc, uno::UNO_QUERY_THROW);
++    rJson.put("title", lcl_Title(xDocProps, u"HasMainTitle"_ustr, [&xDoc] { return xDoc->getTitle(); }));
++    rJson.put("legend", xDocProps->getPropertyValue(u"HasLegend"_ustr).get<bool>());
++    uno::Reference<chart::XAxisXSupplier> xX(xDiagram, uno::UNO_QUERY_THROW);
++    uno::Reference<chart::XAxisYSupplier> xY(xDiagram, uno::UNO_QUERY_THROW);
++    const bool bAxes = aType != "pie";
++    rJson.put("xtitle", bAxes ? lcl_Title(xProps, u"HasXAxisTitle"_ustr, [&xX] { return xX->getXAxisTitle(); }) : OUString());
++    rJson.put("ytitle", bAxes ? lcl_Title(xProps, u"HasYAxisTitle"_ustr, [&xY] { return xY->getYAxisTitle(); }) : OUString());
++}
++
++/* vim:set shiftwidth=4 softtabstop=4 expandtab: */

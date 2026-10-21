@@ -1,0 +1,38 @@
+[package]
+name = "ely-show"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+build = "../../packaging/windows/icon.rs"
+
+[build-dependencies]
+embed-resource.workspace = true
+
+[dependencies]
+ely-files.workspace = true
+ely-gpui-component.workspace = true
+ely-lok = { workspace = true, features = ["view"] }
+ely-office.workspace = true
+gpui.workspace = true
+image.workspace = true
+jiff.workspace = true
+log.workspace = true
+serde_json.workspace = true
+ely-platform.workspace = true
+ely-ui.workspace = true
+
+[dev-dependencies]
+ely-ui = { workspace = true, features = ["test-support"] }
+ely-gpui-component = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+gpui_platform = { workspace = true, features = ["test-support"] }
+
+[[test]]
+name = "compose"
+harness = false
+
+[lints]
+workspace = true

@@ -1,0 +1,18 @@
+DrawingML: register the hyperlink-color namespace at runtime
+
+Patch 0052 added tokens and handling but omitted NamespaceIds().
+Register the URI so import dispatches hlinkClr to HyperLinkContext.
+The existing five-color regression fails without this registration.
+
+diff --git a/oox/source/core/xmlfilterbase.cxx b/oox/source/core/xmlfilterbase.cxx
+index e4a1bd0..3878da6 100644
+--- a/oox/source/core/xmlfilterbase.cxx
++++ b/oox/source/core/xmlfilterbase.cxx
+@@ -158,6 +158,7 @@ const Sequence< beans::Pair< OUString, sal_Int32 > >& NamespaceIds()
+             {u"http://schemas.microsoft.com/office/spreadsheetml/2017/revision16"_ustr,
+              NMSP_xr16},
+             {u"http://schemas.microsoft.com/office/drawing/2017/decorative"_ustr, NMSP_adec},
++            {u"http://schemas.microsoft.com/office/drawing/2018/hyperlinkcolor"_ustr, NMSP_ahyp},
+             {u"http://schemas.microsoft.com/office/drawing/2016/SVG/main"_ustr, NMSP_asvg},
+             {u"http://schemas.microsoft.com/office/drawing/2014/chartex"_ustr, NMSP_cx},
+             {u"http://schemas.microsoft.com/office/drawing/2012/chartStyle"_ustr, NMSP_cs},

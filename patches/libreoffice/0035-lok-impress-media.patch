@@ -1,0 +1,127 @@
+LOK: Impress media without dialogs, and what plays
+
+.uno:InsertAVMedia takes Width and Height in 1/100 mm from a kit client:
+with them it inserts at the slide's centre, no media dialog and no size
+probe through the kernel's own player. .uno:SlideMedia reads the shown
+slide's media: place in the object list, URL, whether linked, the file
+that plays (the link, or the kernel's copy of embedded media) and
+whether that file is missing.
+
+diff --git a/sd/source/ui/func/fuinsert.cxx b/sd/source/ui/func/fuinsert.cxx
+index 63774f7..0aa7add 100644
+--- a/sd/source/ui/func/fuinsert.cxx
++++ b/sd/source/ui/func/fuinsert.cxx
+@@ -84,6 +84,7 @@
+ #include <vcl/GraphicNativeMetadata.hxx>
+ 
+ #include <comphelper/lok.hxx>
++#include <svl/intitem.hxx>
+ 
+ using namespace com::sun::star;
+ 
+@@ -749,6 +750,20 @@ void FuInsertAVMedia::DoExecute( SfxRequest& rReq )
+     }
+ 
+     bool bLink(pLinkItem ? pLinkItem->GetValue() : true);
++    // A kit client gives 1/100 mm sizes; it goes mid-slide.
++    const SfxInt32Item* pWidth = rReq.GetArg<SfxInt32Item>(FN_PARAM_3);
++    const SfxInt32Item* pHeight = rReq.GetArg<SfxInt32Item>(FN_PARAM_4);
++    if (comphelper::LibreOfficeKit::isActive() && bAPI && pWidth && pHeight
++        && pWidth->GetValue() > 0 && pHeight->GetValue() > 0)
++    {
++        const Size aSize(pWidth->GetValue(), pHeight->GetValue());
++        const Size aPage(mrViewShell.GetActualPage()->GetSize());
++        const Point aPos((aPage.Width() - aSize.Width()) / 2, (aPage.Height() - aSize.Height()) / 2);
++        sal_Int8 nAction = DND_ACTION_COPY;
++        mpView->InsertMediaURL(aURL, nAction, aPos, aSize, bLink);
++        rReq.Done();
++        return;
++    }
+     if (!(bAPI
+         || ::avmedia::MediaWindow::executeMediaURLDialog(mpWindow ? mpWindow->GetFrameWeld() : nullptr, aURL, & bLink)
+        ))
+diff --git a/sd/source/ui/unoidl/unomodel.cxx b/sd/source/ui/unoidl/unomodel.cxx
+index 40a4bca..d8f1dee 100644
+--- a/sd/source/ui/unoidl/unomodel.cxx
++++ b/sd/source/ui/unoidl/unomodel.cxx
+@@ -101,6 +101,8 @@
+ #include <svx/svdsob.hxx>
+ #include <svx/svdundo.hxx>
+ #include <svx/svdomedia.hxx>
++#include <avmedia/mediaitem.hxx>
++#include <osl/file.hxx>
+ #include <svx/unoapi.hxx>
+ #include <svx/unofill.hxx>
+ #include <svx/sdrpagewindow.hxx>
+@@ -2065,7 +2067,7 @@ bool SdXImpressDocument::supportsCommand(std::u16string_view rCommand)
+ {
+     return rCommand == u"SlideDesign" || rCommand == u"SlideObjects" || rCommand == u"Chart"
+            || rCommand == u"SlideNotes" || rCommand == u"SlideTransition"
+-           || rCommand == u"SlideAnimations";
++           || rCommand == u"SlideAnimations" || rCommand == u"SlideMedia";
+ }
+ 
+ namespace
+@@ -2224,6 +2226,34 @@ void lcl_SlideNotes(::tools::JsonWriter& rJson, SdDrawDocument& rDoc, sd::DrawVi
+     rJson.put("rich", pText && !sd::DrawViewShell::NotesLook(pText->GetTextObject(), rDoc.GetPool()));
+ }
+ 
++/// The shown slide's media: list place, file, link.
++void lcl_SlideMedia(::tools::JsonWriter& rJson, sd::DrawViewShell& rShell)
++{
++    sal_Int64 nAt = 0;
++    auto aList = rJson.startArray("media");
++    for (const rtl::Reference<SdrObject>& pObj : *rShell.GetActualPage())
++    {
++        if (pObj->isAnnotationObject())
++            continue;
++        if (auto pMedia = dynamic_cast<const SdrMediaObj*>(pObj.get()))
++        {
++            const avmedia::MediaItem& rItem = pMedia->getMediaProperties();
++            const bool bLink = !rItem.getURL().startsWithIgnoreAsciiCase("vnd.sun.star.Package:");
++            // Links play their file; embedded media a temp copy.
++            const OUString aFile = bLink ? rItem.getURL() : rItem.getTempURL();
++            osl::DirectoryItem aItem;
++            auto aOne = rJson.startStruct();
++            rJson.put("index", nAt);
++            rJson.put("url", rItem.getURL());
++            rJson.put("link", bLink);
++            rJson.put("file", aFile);
++            rJson.put("missing", aFile.isEmpty() || osl::DirectoryItem::get(aFile, aItem) != osl::FileBase::E_None);
++            rJson.put("loop", rItem.isLoop());
++        }
++        ++nAt;
++    }
++}
++
+ /// The shown slide's objects, selection, guides and snapping.
+ void lcl_SlideObjects(::tools::JsonWriter& rJson, sd::DrawViewShell& rShell)
+ {
+@@ -2292,6 +2322,12 @@ void SdXImpressDocument::getCommandValues(::tools::JsonWriter& rJsonWriter, std:
+             lcl_SlideNotes(rJsonWriter, *mpDoc, *pShell);
+         return;
+     }
++    if (rCommand == ".uno:SlideMedia")
++    {
++        if (DrawViewShell* pShell = GetViewShell())
++            lcl_SlideMedia(rJsonWriter, *pShell);
++        return;
++    }
+     if (rCommand == ".uno:SlideTransition" || rCommand == ".uno:SlideAnimations")
+     {
+         DrawViewShell* pShell = GetViewShell();
+diff --git a/sfx2/sdi/sfx.sdi b/sfx2/sdi/sfx.sdi
+index 76af1e2..558b25c 100644
+--- a/sfx2/sdi/sfx.sdi
++++ b/sfx2/sdi/sfx.sdi
+@@ -5599,7 +5599,9 @@ SfxVoidItem InsertAVMedia SID_INSERT_AVMEDIA
+ (
+     SfxStringItem URL SID_INSERT_AVMEDIA,
+     SvxSizeItem Size FN_PARAM_1,
+-    SfxBoolItem IsLink FN_PARAM_2
++    SfxBoolItem IsLink FN_PARAM_2,
++    SfxInt32Item Width FN_PARAM_3,
++    SfxInt32Item Height FN_PARAM_4
+ )
+ [
+     AutoUpdate = FALSE,

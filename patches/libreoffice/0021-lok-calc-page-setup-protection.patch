@@ -1,0 +1,395 @@
+diff --git a/sc/sdi/scalc.sdi b/sc/sdi/scalc.sdi
+index 63cc999..001366f 100644
+--- a/sc/sdi/scalc.sdi
++++ b/sc/sdi/scalc.sdi
+@@ -4238,7 +4238,7 @@ SfxBoolItem PagebreakMode FID_PAGEBREAKMODE
+ 
+ 
+ SfxVoidItem PageFormatDialog SID_FORMATPAGE
+-()
++(SfxStringItem Page FN_PARAM_1)
+ [
+     AutoUpdate = FALSE,
+     FastCall = FALSE,
+@@ -4274,7 +4274,7 @@ SfxVoidItem PreviousPage SID_PREVIEW_PREVIOUS
+ 
+ 
+ SfxVoidItem Protect FID_PROTECT_TABLE
+-(SfxBoolItem Protect FID_PROTECT_TABLE)
++(SfxBoolItem Protect FID_PROTECT_TABLE,SfxStringItem Protection FN_PARAM_1)
+ [
+     AutoUpdate = FALSE,
+     FastCall = FALSE,
+diff --git a/sc/source/core/data/table5.cxx b/sc/source/core/data/table5.cxx
+index 5cc62bf..8e976d0 100644
+--- a/sc/source/core/data/table5.cxx
++++ b/sc/source/core/data/table5.cxx
+@@ -979,7 +979,8 @@ void ScTable::InvalidateTextWidth(const ScAddress* pAdrFrom, const ScAddress* pA
+ 
+     const SCCOL nCol1 = pAdrFrom ? pAdrFrom->Col() : 0;
+     const SCROW nRow1 = pAdrFrom ? pAdrFrom->Row() : 0;
+-    const SCCOL nCol2 = pAdrTo ? pAdrTo->Col() : aCol.size() - 1;
++    // Only allocated columns exist; a sheet-wide end is past them.
++    const SCCOL nCol2 = std::min<SCCOL>(pAdrTo ? pAdrTo->Col() : aCol.size() - 1, aCol.size() - 1);
+     const SCROW nRow2 = pAdrTo ? pAdrTo->Row() : rDocument.MaxRow();
+ 
+     for (SCCOL nCol = nCol1; nCol <= nCol2; ++nCol)
+diff --git a/sc/source/ui/docshell/docsh4.cxx b/sc/source/ui/docshell/docsh4.cxx
+index 226b37d..46f3547 100644
+--- a/sc/source/ui/docshell/docsh4.cxx
++++ b/sc/source/ui/docshell/docsh4.cxx
+@@ -48,6 +48,8 @@
+ #include <svx/fmshell.hxx>
+ #include <svx/pageitem.hxx>
+ #include <editeng/sizeitem.hxx>
++#include <attrib.hxx>
++#include <boost/property_tree/json_parser.hpp>
+ #include <editeng/paperinf.hxx>
+ #include <sfx2/passwd.hxx>
+ #include <sfx2/filedlghelper.hxx>
+@@ -2244,6 +2246,82 @@ void ScDocShell::PageStyleModified( std::u16string_view rStyleName, bool bApi )
+     }
+ }
+ 
++namespace
++{
++/// Applies a kit client's page JSON to the page style.
++bool lcl_KitPage(ScDocShell& rDocSh, SCTAB nTab, const OUString& rJson)
++{
++    constexpr int nMinScale = 10;
++    constexpr int nMaxScale = 400;
++    constexpr int nMaxPages = 1000;
++    boost::property_tree::ptree aTree;
++    std::stringstream aStream{ std::string(rJson.toUtf8()) };
++    bool bLandscape = false;
++    try
++    {
++        boost::property_tree::read_json(aStream, aTree);
++        bLandscape = aTree.get<bool>("landscape");
++    }
++    catch (const boost::property_tree::ptree_error&)
++    {
++        return false;
++    }
++    sal_uInt16 nScale = 0;
++    sal_uInt16 nPages = 0;
++    ScPageScaleToItem aScaleTo;
++    if (const auto oScale = aTree.get_optional<int>("scale"))
++    {
++        if (*oScale < nMinScale || *oScale > nMaxScale)
++            return false;
++        nScale = *oScale;
++    }
++    else if (const auto oFit = aTree.get_child_optional("fit"))
++    {
++        std::vector<int> aFit;
++        for (const auto& rItem : *oFit)
++            aFit.push_back(rItem.second.get_value<int>(-1));
++        if (aFit.size() != 2 || aFit[0] < 0 || aFit[1] < 0 || aFit[0] > nMaxPages
++            || aFit[1] > nMaxPages || (aFit[0] == 0 && aFit[1] == 0))
++            return false;
++        aScaleTo.Set(aFit[0], aFit[1]);
++    }
++    else if (const auto oPages = aTree.get_optional<int>("pages"))
++    {
++        if (*oPages < 1 || *oPages > nMaxPages)
++            return false;
++        nPages = *oPages;
++    }
++    else
++        return false;
++
++    ScDocument& rDoc = rDocSh.GetDocument();
++    const OUString aName = rDoc.GetPageStyle(nTab);
++    SfxStyleSheetBase* pStyle = rDoc.GetStyleSheetPool()->Find(aName, SfxStyleFamily::Page);
++    if (!pStyle)
++        return false;
++    ScStyleSaveData aOld;
++    aOld.InitFromStyle(pStyle);
++    SfxItemSet aSet(pStyle->GetItemSet());
++    SvxPageItem aPage(aSet.Get(ATTR_PAGE));
++    aPage.SetLandscape(bLandscape);
++    aSet.Put(aPage);
++    const Size aSize = aSet.Get(ATTR_PAGE_SIZE).GetSize();
++    if ((aSize.Width() > aSize.Height()) != bLandscape)
++        aSet.Put(SvxSizeItem(ATTR_PAGE_SIZE, Size(aSize.Height(), aSize.Width())));
++    aSet.Put(SfxUInt16Item(ATTR_PAGE_SCALE, nScale));
++    aSet.Put(SfxUInt16Item(ATTR_PAGE_SCALETOPAGES, nPages));
++    aSet.Put(aScaleTo);
++    rDoc.ModifyStyleSheet(*pStyle, aSet);
++    ScStyleSaveData aNew;
++    aNew.InitFromStyle(pStyle);
++    if (rDoc.IsUndoEnabled())
++        rDocSh.GetUndoManager()->AddUndoAction(
++            std::make_unique<ScUndoModifyStyle>(rDocSh, SfxStyleFamily::Page, aOld, aNew));
++    rDocSh.PageStyleModified(aName, true);
++    return true;
++}
++}
++
+ void ScDocShell::ExecutePageStyle( const SfxViewShell& rCaller,
+                                    SfxRequest&   rReq,
+                                    SCTAB         nCurTab )
+@@ -2255,7 +2333,14 @@ void ScDocShell::ExecutePageStyle( const SfxViewShell& rCaller,
+         case SID_STATUS_PAGESTYLE:  // click on StatusBar control
+         case SID_FORMATPAGE:
+             {
+-                if ( pReqArgs == nullptr )
++                if (const SfxStringItem* pKit = rReq.GetArg<SfxStringItem>(FN_PARAM_1))
++                {
++                    if (lcl_KitPage(*this, nCurTab, pKit->GetValue()))
++                        rReq.Done();
++                    else
++                        rReq.Ignore();
++                }
++                else if ( pReqArgs == nullptr )
+                 {
+                     OUString aOldName = m_pDocument->GetPageStyle( nCurTab );
+                     ScStyleSheetPool* pStylePool = m_pDocument->GetStyleSheetPool();
+diff --git a/sc/source/ui/inc/kitsheet.hxx b/sc/source/ui/inc/kitsheet.hxx
+new file mode 100644
+index 0000000..481f20d
+--- /dev/null
++++ b/sc/source/ui/inc/kitsheet.hxx
+@@ -0,0 +1,28 @@
++/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++/*
++ * This file is part of the LibreOffice project.
++ *
++ * This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
++ */
++
++#pragma once
++
++#include <tabprotection.hxx>
++
++#include <string_view>
++#include <utility>
++
++/// Sheet protection options by their kit client names.
++constexpr std::pair<std::string_view, ScTableProtection::Option> aKitProtectOptions[]
++    = { { "selectLocked", ScTableProtection::SELECT_LOCKED_CELLS },
++        { "selectUnlocked", ScTableProtection::SELECT_UNLOCKED_CELLS },
++        { "insertColumns", ScTableProtection::INSERT_COLUMNS },
++        { "insertRows", ScTableProtection::INSERT_ROWS },
++        { "deleteColumns", ScTableProtection::DELETE_COLUMNS },
++        { "deleteRows", ScTableProtection::DELETE_ROWS },
++        { "autofilter", ScTableProtection::AUTOFILTER },
++        { "pivot", ScTableProtection::PIVOT_TABLES } };
++
++/* vim:set shiftwidth=4 softtabstop=4 expandtab: */
+diff --git a/sc/source/ui/unoobj/docuno.cxx b/sc/source/ui/unoobj/docuno.cxx
+index 31a7d6f..0715e00 100644
+--- a/sc/source/ui/unoobj/docuno.cxx
++++ b/sc/source/ui/unoobj/docuno.cxx
+@@ -158,6 +158,9 @@
+ #include <dpobject.hxx>
+ #include <dpshttab.hxx>
+ #include <kitpivot.hxx>
++#include <kitsheet.hxx>
++#include <attrib.hxx>
++#include <svx/pageitem.hxx>
+ #include <pivot.hxx>
+ #include <svx/svdoole2.hxx>
+ 
+@@ -939,6 +942,65 @@ void lcl_Chart(tools::JsonWriter& rJson, ScDocument& rDoc, ScViewData& rData)
+     sctools::writeChartLook(rJson, rDoc.GetChartByName(aName));
+ }
+ 
++/// A repeated row or column span, 1-based.
++void lcl_PutSpan(tools::JsonWriter& rJson, std::string_view rName, const std::optional<ScRange>& oRange,
++                 bool bRows)
++{
++    if (!oRange)
++        return;
++    auto aNode = rJson.startNode(rName);
++    rJson.put("first", (bRows ? oRange->aStart.Row() : oRange->aStart.Col()) + 1);
++    rJson.put("last", (bRows ? oRange->aEnd.Row() : oRange->aEnd.Col()) + 1);
++}
++
++/// Print ranges, titles, page setup and breaks at the cursor.
++void lcl_PrintLayout(tools::JsonWriter& rJson, ScDocument& rDoc, const ScAddress& rCursor)
++{
++    const SCTAB nTab = rCursor.Tab();
++    const ScAddress::Details aDetails(rDoc.GetAddressConvention(), 0, 0);
++    {
++        auto aAreas = rJson.startArray("areas");
++        for (sal_uInt16 i = 0, n = rDoc.GetPrintRangeCount(nTab); i < n; ++i)
++            rJson.putSimpleValue(rDoc.GetPrintRange(nTab, i)->Format(rDoc, ScRefFlags::RANGE_ABS, aDetails));
++    }
++    lcl_PutSpan(rJson, "rows", rDoc.GetRepeatRowRange(nTab), true);
++    lcl_PutSpan(rJson, "columns", rDoc.GetRepeatColRange(nTab), false);
++    rJson.put("rowBreak", bool(rDoc.HasRowBreak(rCursor.Row(), nTab) & ScBreakType::Manual));
++    rJson.put("columnBreak", bool(rDoc.HasColBreak(rCursor.Col(), nTab) & ScBreakType::Manual));
++    const OUString aStyle = rDoc.GetPageStyle(nTab);
++    SfxStyleSheetBase* pStyle = rDoc.GetStyleSheetPool()->Find(aStyle, SfxStyleFamily::Page);
++    if (!pStyle)
++        return;
++    const SfxItemSet& rSet = pStyle->GetItemSet();
++    rJson.put("landscape", rSet.Get(ATTR_PAGE).IsLandscape());
++    rJson.put("scale", rSet.Get(ATTR_PAGE_SCALE).GetValue());
++    rJson.put("pages", rSet.Get(ATTR_PAGE_SCALETOPAGES).GetValue());
++    rJson.put("fitWidth", rSet.Get(ATTR_PAGE_SCALETO).GetWidth());
++    rJson.put("fitHeight", rSet.Get(ATTR_PAGE_SCALETO).GetHeight());
++    // Every sheet the page style governs.
++    auto aSheets = rJson.startArray("sheets");
++    for (SCTAB i = 0; i < rDoc.GetTableCount(); ++i)
++    {
++        OUString aName;
++        if (rDoc.GetPageStyle(i) == aStyle && rDoc.GetName(i, aName))
++            rJson.putSimpleValue(aName);
++    }
++}
++
++/// The sheet's protection and its allowed actions.
++void lcl_SheetProtection(tools::JsonWriter& rJson, ScDocument& rDoc, SCTAB nTab)
++{
++    const ScTableProtection aNone;
++    const ScTableProtection* pProtect = rDoc.GetTabProtection(nTab);
++    const ScTableProtection& rProtect = pProtect ? *pProtect : aNone;
++    rJson.put("protected", rProtect.isProtected());
++    rJson.put("password", rProtect.isProtected() && rProtect.isProtectedWithPass());
++    auto aAllow = rJson.startArray("allow");
++    for (const auto& [rName, eOption] : aKitProtectOptions)
++        if (rProtect.isOptionEnabled(eOption))
++            rJson.putSimpleValue(OUString::fromUtf8(rName));
++}
++
+ /// The pivot table at the cursor: ranges and fields.
+ void lcl_PivotTable(tools::JsonWriter& rJson, ScDocument& rDoc, const ScAddress& rCursor)
+ {
+@@ -996,7 +1058,7 @@ bool ScModelObj::supportsCommand(std::u16string_view rCommand)
+         = { u"SheetReferences",  u"DefinedNames",       u"SelectedRange",
+             u"AutoFilterValues", u"DataSelectValues",   u"Validation",
+             u"NumberFormatCode", u"ConditionalFormats", u"Chart",
+-            u"PivotTable" };
++            u"PivotTable",       u"PrintLayout",        u"SheetProtection" };
+     return std::find(std::begin(aCommands), std::end(aCommands), rCommand) != std::end(aCommands);
+ }
+ 
+@@ -1033,6 +1095,10 @@ void ScModelObj::getCommandValues(tools::JsonWriter& rJsonWriter, std::string_vi
+             return lcl_Chart(rJsonWriter, rDoc, *pCurrent);
+         if (rCommand == ".uno:PivotTable")
+             return lcl_PivotTable(rJsonWriter, rDoc, aCursor);
++        if (rCommand == ".uno:PrintLayout")
++            return lcl_PrintLayout(rJsonWriter, rDoc, aCursor);
++        if (rCommand == ".uno:SheetProtection")
++            return lcl_SheetProtection(rJsonWriter, rDoc, nTab);
+     }
+     if (pDocShell && rCommand == ".uno:SelectedRange")
+     {
+diff --git a/sc/source/ui/view/formatsh.cxx b/sc/source/ui/view/formatsh.cxx
+index e2a6202..caa636d 100644
+--- a/sc/source/ui/view/formatsh.cxx
++++ b/sc/source/ui/view/formatsh.cxx
+@@ -1065,6 +1065,18 @@ void ScFormatShell::ExecuteAttr( SfxRequest& rReq )
+                 rBindings.Invalidate( nSlot );
+                 rBindings.Update( nSlot );
+                 break;
++            case SID_SCATTR_CELLPROTECTION:
++            {
++                // Sets the lock, keeps the hide flags.
++                const SfxBoolItem* pLock = rReq.GetArg<SfxBoolItem>(SID_SCATTR_CELLPROTECTION);
++                if (!pLock)
++                    break;
++                const ScProtectionAttr& rOld = pTabViewShell->GetSelectionPattern()->GetItem(ATTR_PROTECTION);
++                pTabViewShell->ApplyAttr(ScProtectionAttr(pLock->GetValue(), rOld.GetHideFormula(), rOld.GetHideCell(), rOld.GetHidePrint()));
++                rBindings.Invalidate( nSlot );
++                rBindings.Update( nSlot );
++                break;
++            }
+             case SID_ATTR_CHAR_COLOR:
+             case SID_SCATTR_PROTECTION :
+             {
+diff --git a/sc/source/ui/view/tabvwsh3.cxx b/sc/source/ui/view/tabvwsh3.cxx
+index c15d7c5..49295ba 100644
+--- a/sc/source/ui/view/tabvwsh3.cxx
++++ b/sc/source/ui/view/tabvwsh3.cxx
+@@ -45,6 +45,9 @@
+ #include <reffact.hxx>
+ #include <tabprotection.hxx>
+ #include <protectiondlg.hxx>
++#include <kitsheet.hxx>
++#include <docfunc.hxx>
++#include <boost/property_tree/json_parser.hpp>
+ #include <duplicaterecordsdlg.hxx>
+ #include <markdata.hxx>
+ 
+@@ -250,6 +253,56 @@ void ScTabViewShell::FinishProtectTable()
+     SelectionChanged();
+ }
+ 
++namespace
++{
++/// Protects or unprotects as a kit client's JSON asks.
++bool lcl_KitProtect(ScTabViewShell& rShell, SCTAB nTab, bool bOld, const OUString& rJson)
++{
++    boost::property_tree::ptree aTree;
++    std::stringstream aStream{ std::string(rJson.toUtf8()) };
++    try
++    {
++        boost::property_tree::read_json(aStream, aTree);
++    }
++    catch (const boost::property_tree::json_parser_error&)
++    {
++        return false;
++    }
++    const bool bProtect = aTree.get<bool>("protect", false);
++    const OUString aPassword = OUString::fromUtf8(aTree.get<std::string>("password", ""));
++    if (bProtect == bOld)
++        return false;
++    if (!bProtect)
++    {
++        // A wrong password changes nothing.
++        if (!rShell.GetViewData().GetDocShell()->GetDocFunc().Unprotect(nTab, aPassword, true))
++            return false;
++        rShell.SetTabProtectionSymbol(nTab, false);
++        return true;
++    }
++    ScTableProtection aNew;
++    aNew.setProtected(true);
++    aNew.setPassword(aPassword);
++    for (const auto& [rName, eOption] : aKitProtectOptions)
++        aNew.setOption(eOption, false);
++    if (const auto oAllow = aTree.get_child_optional("allow"))
++    {
++        for (const auto& rItem : *oAllow)
++        {
++            const std::string aName = rItem.second.get_value<std::string>();
++            const auto pFound = std::find_if(std::begin(aKitProtectOptions), std::end(aKitProtectOptions),
++                                             [&aName](const auto& rOption) { return rOption.first == aName; });
++            if (pFound == std::end(aKitProtectOptions))
++                return false;
++            aNew.setOption(pFound->second, true);
++        }
++    }
++    ScModule::get()->InputEnterHandler();
++    rShell.ProtectSheet(nTab, aNew);
++    return true;
++}
++}
++
+ void ScTabViewShell::ExecProtectTable( SfxRequest& rReq )
+ {
+     ScModule* pScMod = ScModule::get();
+@@ -258,6 +311,18 @@ void ScTabViewShell::ExecProtectTable( SfxRequest& rReq )
+     SCTAB               nTab = GetViewData().CurrentTabForData();
+     bool                bOldProtection = rDoc.IsTabProtected(nTab);
+ 
++    if (const SfxStringItem* pKit = rReq.GetArg<SfxStringItem>(FN_PARAM_1))
++    {
++        if (!lcl_KitProtect(*this, nTab, bOldProtection, pKit->GetValue()))
++        {
++            rReq.Ignore();
++            return;
++        }
++        rReq.Done();
++        FinishProtectTable();
++        return;
++    }
++
+     if( pReqArgs )
+     {
+         const SfxPoolItem* pItem;

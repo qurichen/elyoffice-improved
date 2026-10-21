@@ -1,0 +1,293 @@
+sc: kit chart looks come from svx ChartHelper
+
+The look code 0020 added to sc moved to svx (0028); Calc calls it there.
+
+diff --git a/sc/inc/ChartTools.hxx b/sc/inc/ChartTools.hxx
+index 2e49612..4a22141 100644
+--- a/sc/inc/ChartTools.hxx
++++ b/sc/inc/ChartTools.hxx
+@@ -13,8 +13,6 @@
+ #include <string_view>
+ #include <vector>
+ 
+-#include <com/sun/star/uno/Reference.hxx>
+-#include <com/sun/star/uno/XInterface.hpp>
+ #include <svx/svditer.hxx>
+ #include <tools/long.hxx>
+ #include "types.hxx"
+@@ -24,7 +22,6 @@
+ class ScDocShell;
+ class ScDocument;
+ class SdrOle2Obj;
+-namespace tools { class JsonWriter; }
+ 
+ namespace sctools {
+ 
+@@ -55,14 +52,6 @@ std::vector<SdrOle2Obj*> getAllPivotChartsConnectedTo(std::u16string_view sPivot
+ 
+ /// `rText`'s ranges, when every part names existing cells.
+ std::optional<ScRangeList> chartRanges(const ScDocument& rDoc, std::u16string_view rText);
+-/// Whether a kit client's chart look parses.
+-bool isChartLook(std::u16string_view rJson);
+-/// Sets type, title, legend and axis titles from JSON.
+-bool setChartLook(const css::uno::Reference<css::uno::XInterface>& xChart,
+-                  std::u16string_view rJson);
+-/// Writes the same look as JSON members.
+-void writeChartLook(::tools::JsonWriter& rJson,
+-                    const css::uno::Reference<css::uno::XInterface>& xChart);
+ 
+ } // end sctools
+ 
+diff --git a/sc/source/ui/docshell/docsh4.cxx b/sc/source/ui/docshell/docsh4.cxx
+index 46f3547..78810ce 100644
+--- a/sc/source/ui/docshell/docsh4.cxx
++++ b/sc/source/ui/docshell/docsh4.cxx
+@@ -96,6 +96,7 @@
+ #include <reffact.hxx>
+ #include <chartlis.hxx>
+ #include <chartpos.hxx>
++#include <svx/charthelper.hxx>
+ #include <ChartTools.hxx>
+ #include <com/sun/star/chart2/XChartDocument.hpp>
+ #include <com/sun/star/util/XCloneable.hpp>
+@@ -1729,7 +1730,7 @@ void ScDocShell::ExecuteChartSource(SfxRequest& rReq)
+     // A kit client's look; it must parse before anything changes.
+     const SfxStringItem* pLook = rReq.GetArg<SfxStringItem>(FN_PARAM_3);
+     if (pLook
+-        && (!bColInit || !bRowInit || !sctools::isChartLook(pLook->GetValue())
++        && (!bColInit || !bRowInit || !ChartHelper::IsChartLook(pLook->GetValue())
+             || !sctools::chartRanges(rDoc, aRangeName)))
+     {
+         SAL_WARN("sc.lok", "chart look needs headers and must parse: " << pLook->GetValue());
+@@ -1800,7 +1801,7 @@ void ScDocShell::ExecuteChartSource(SfxRequest& rReq)
+             pUndoManager->EnterListAction(ScResId(STR_UNDO_CHARTDATA), u""_ustr, 0, pViewSh->GetViewShellId());
+             auto xChart = m_pDocument->GetChartByName(aChartName);
+             ChartState aOld = lcl_ChartState(xChart);
+-            sctools::setChartLook(xChart, pLook->GetValue());
++            ChartHelper::SetChartLook(xChart, pLook->GetValue());
+             if (bUndo)
+                 pUndoManager->AddUndoAction(std::make_unique<ScUndoChartLook>(
+                     *this, aChartName, std::move(aOld), lcl_ChartState(xChart)));
+diff --git a/sc/source/ui/drawfunc/fuins2.cxx b/sc/source/ui/drawfunc/fuins2.cxx
+index 78e4a9c..b0169d0 100644
+--- a/sc/source/ui/drawfunc/fuins2.cxx
++++ b/sc/source/ui/drawfunc/fuins2.cxx
+@@ -63,6 +63,7 @@
+ #include <PivotTableDataProvider.hxx>
+ #include <chart2uno.hxx>
+ #include <fuinsert.hxx>
++#include <svx/charthelper.hxx>
+ #include <ChartTools.hxx>
+ #include <tabvwsh.hxx>
+ #include <sc.hrc>
+@@ -424,7 +425,7 @@ FuInsertChart::FuInsertChart(ScTabViewShell& rViewSh, vcl::Window* pWin, ScDrawV
+ 
+     // A kit client's look must parse before anything lands.
+     const SfxStringItem* pLook = rReq.GetArg<SfxStringItem>(FN_PARAM_3);
+-    if (pLook && !sctools::isChartLook(pLook->GetValue()))
++    if (pLook && !ChartHelper::IsChartLook(pLook->GetValue()))
+     {
+         SAL_WARN("sc.lok", "chart look does not parse: " << pLook->GetValue());
+         return;
+@@ -643,7 +644,7 @@ FuInsertChart::FuInsertChart(ScTabViewShell& rViewSh, vcl::Window* pWin, ScDrawV
+         // No wizard: one undo step, the look from the request.
+         pView->AddUndo(std::make_unique<SdrUndoNewObj>(*pObj));
+         if (pLook)
+-            sctools::setChartLook(xChartModel, pLook->GetValue());
++            ChartHelper::SetChartLook(xChartModel, pLook->GetValue());
+         if (xChartModel.is())
+             xChartModel->unlockControllers();
+     }
+diff --git a/sc/source/ui/unoobj/ChartTools.cxx b/sc/source/ui/unoobj/ChartTools.cxx
+index caba334..5fb13a4 100644
+--- a/sc/source/ui/unoobj/ChartTools.cxx
++++ b/sc/source/ui/unoobj/ChartTools.cxx
+@@ -13,18 +13,8 @@
+ #include <document.hxx>
+ #include <drwlayer.hxx>
+ 
+-#include <com/sun/star/beans/XPropertySet.hpp>
+-#include <com/sun/star/chart/XAxisXSupplier.hpp>
+-#include <com/sun/star/chart/XAxisYSupplier.hpp>
+-#include <com/sun/star/chart/XChartDocument.hpp>
+ #include <com/sun/star/chart2/XChartDocument.hpp>
+-#include <com/sun/star/drawing/XShape.hpp>
+-#include <com/sun/star/lang/XMultiServiceFactory.hpp>
+-#include <functional>
+ #include <optional>
+-#include <sstream>
+-#include <tools/json_writer.hxx>
+-#include <boost/property_tree/json_parser.hpp>
+ #include <com/sun/star/embed/XEmbeddedObject.hpp>
+ #include <chart2/AbstractPivotTableDataProvider.hxx>
+ #include <svx/svditer.hxx>
+@@ -181,76 +171,6 @@ std::vector<SdrOle2Obj*> getAllPivotChartsConnectedTo(std::u16string_view sPivot
+     return aObjects;
+ }
+ 
+-namespace
+-{
+-/// Kit names and the diagram services they map to.
+-constexpr std::pair<std::string_view, std::u16string_view> aChartTypes[]
+-    = { { "column", u"com.sun.star.chart.BarDiagram" },
+-        { "bar", u"com.sun.star.chart.BarDiagram" },
+-        { "line", u"com.sun.star.chart.LineDiagram" },
+-        { "scatter", u"com.sun.star.chart.XYDiagram" },
+-        { "pie", u"com.sun.star.chart.PieDiagram" } };
+-
+-/// A parsed look; "other" keeps the diagram.
+-struct ChartLook
+-{
+-    std::string_view aType;
+-    OUString aTitle, aXTitle, aYTitle;
+-    bool bLegend = true;
+-};
+-
+-std::optional<ChartLook> lcl_ParseLook(std::u16string_view rJson)
+-{
+-    boost::property_tree::ptree aTree;
+-    std::stringstream aStream{ std::string(OUString(rJson).toUtf8()) };
+-    try
+-    {
+-        boost::property_tree::read_json(aStream, aTree);
+-    }
+-    catch (const boost::property_tree::json_parser_error&)
+-    {
+-        return std::nullopt;
+-    }
+-    const std::string aType = aTree.get<std::string>("type", "");
+-    ChartLook aLook;
+-    if (aType == "other")
+-        aLook.aType = "other";
+-    for (const auto& [rName, rService] : aChartTypes)
+-        if (rName == aType)
+-            aLook.aType = rName;
+-    if (aLook.aType.empty())
+-        return std::nullopt;
+-    aLook.aTitle = OUString::fromUtf8(aTree.get<std::string>("title", ""));
+-    aLook.aXTitle = OUString::fromUtf8(aTree.get<std::string>("xtitle", ""));
+-    aLook.aYTitle = OUString::fromUtf8(aTree.get<std::string>("ytitle", ""));
+-    aLook.bLegend = aTree.get<bool>("legend", true);
+-    return aLook;
+-}
+-
+-/// Shows a title with this text; empty hides it.
+-void lcl_SetTitle(const uno::Reference<beans::XPropertySet>& xOwner, const OUString& rHas,
+-                  const std::function<uno::Reference<drawing::XShape>()>& rTitle,
+-                  const OUString& rText)
+-{
+-    xOwner->setPropertyValue(rHas, uno::Any(!rText.isEmpty()));
+-    if (rText.isEmpty())
+-        return;
+-    uno::Reference<beans::XPropertySet> xTitle(rTitle(), uno::UNO_QUERY_THROW);
+-    xTitle->setPropertyValue(u"String"_ustr, uno::Any(rText));
+-}
+-
+-OUString lcl_Title(const uno::Reference<beans::XPropertySet>& xOwner, const OUString& rHas,
+-                   const std::function<uno::Reference<drawing::XShape>()>& rTitle)
+-{
+-    OUString aText;
+-    if (!xOwner->getPropertyValue(rHas).get<bool>())
+-        return aText;
+-    uno::Reference<beans::XPropertySet> xTitle(rTitle(), uno::UNO_QUERY_THROW);
+-    xTitle->getPropertyValue(u"String"_ustr) >>= aText;
+-    return aText;
+-}
+-}
+-
+ std::optional<ScRangeList> chartRanges(const ScDocument& rDoc, std::u16string_view rText)
+ {
+     ScRangeList aRanges;
+@@ -264,71 +184,6 @@ std::optional<ScRangeList> chartRanges(const ScDocument& rDoc, std::u16string_vi
+     return aRanges;
+ }
+ 
+-bool isChartLook(std::u16string_view rJson) { return lcl_ParseLook(rJson).has_value(); }
+-
+-bool setChartLook(const uno::Reference<uno::XInterface>& xChart, std::u16string_view rJson)
+-{
+-    const std::optional<ChartLook> oLook = lcl_ParseLook(rJson);
+-    uno::Reference<chart::XChartDocument> xDoc(xChart, uno::UNO_QUERY);
+-    if (!oLook || !xDoc.is())
+-        return false;
+-    uno::Reference<chart::XDiagram> xDiagram = xDoc->getDiagram();
+-    const auto pType = std::find_if(std::begin(aChartTypes), std::end(aChartTypes),
+-                                    [&oLook](const auto& rPair) { return rPair.first == oLook->aType; });
+-    if (pType != std::end(aChartTypes))
+-    {
+-        if (xDiagram->getDiagramType() != pType->second)
+-        {
+-            uno::Reference<lang::XMultiServiceFactory> xFactory(xDoc, uno::UNO_QUERY_THROW);
+-            xDiagram.set(xFactory->createInstance(OUString(pType->second)), uno::UNO_QUERY_THROW);
+-            xDoc->setDiagram(xDiagram);
+-        }
+-        uno::Reference<beans::XPropertySet> xProps(xDiagram, uno::UNO_QUERY_THROW);
+-        if (pType->second == u"com.sun.star.chart.BarDiagram")
+-            xProps->setPropertyValue(u"Vertical"_ustr, uno::Any(oLook->aType == "bar"));
+-        if (oLook->aType == "scatter")
+-            xProps->setPropertyValue(u"Lines"_ustr, uno::Any(false));
+-    }
+-    uno::Reference<beans::XPropertySet> xDocProps(xDoc, uno::UNO_QUERY_THROW);
+-    lcl_SetTitle(xDocProps, u"HasMainTitle"_ustr, [&xDoc] { return xDoc->getTitle(); },
+-                 oLook->aTitle);
+-    xDocProps->setPropertyValue(u"HasLegend"_ustr, uno::Any(oLook->bLegend));
+-    // A pie has no axes.
+-    if (xDiagram->getDiagramType() == u"com.sun.star.chart.PieDiagram")
+-        return true;
+-    uno::Reference<chart::XAxisXSupplier> xX(xDiagram, uno::UNO_QUERY_THROW);
+-    uno::Reference<chart::XAxisYSupplier> xY(xDiagram, uno::UNO_QUERY_THROW);
+-    uno::Reference<beans::XPropertySet> xProps(xDiagram, uno::UNO_QUERY_THROW);
+-    lcl_SetTitle(xProps, u"HasXAxisTitle"_ustr, [&xX] { return xX->getXAxisTitle(); },
+-                 oLook->aXTitle);
+-    lcl_SetTitle(xProps, u"HasYAxisTitle"_ustr, [&xY] { return xY->getYAxisTitle(); },
+-                 oLook->aYTitle);
+-    return true;
+-}
+-
+-void writeChartLook(::tools::JsonWriter& rJson, const uno::Reference<uno::XInterface>& xChart)
+-{
+-    uno::Reference<chart::XChartDocument> xDoc(xChart, uno::UNO_QUERY_THROW);
+-    uno::Reference<chart::XDiagram> xDiagram = xDoc->getDiagram();
+-    uno::Reference<beans::XPropertySet> xProps(xDiagram, uno::UNO_QUERY_THROW);
+-    const OUString aService = xDiagram->getDiagramType();
+-    std::string_view aType = "other";
+-    for (const auto& [rName, rService] : aChartTypes)
+-        if (rService == aService && aType == "other")
+-            aType = rName;
+-    if (aType == "column" && xProps->getPropertyValue(u"Vertical"_ustr).get<bool>())
+-        aType = "bar";
+-    rJson.put("type", aType);
+-    uno::Reference<beans::XPropertySet> xDocProps(xDoc, uno::UNO_QUERY_THROW);
+-    rJson.put("title", lcl_Title(xDocProps, u"HasMainTitle"_ustr, [&xDoc] { return xDoc->getTitle(); }));
+-    rJson.put("legend", xDocProps->getPropertyValue(u"HasLegend"_ustr).get<bool>());
+-    uno::Reference<chart::XAxisXSupplier> xX(xDiagram, uno::UNO_QUERY_THROW);
+-    uno::Reference<chart::XAxisYSupplier> xY(xDiagram, uno::UNO_QUERY_THROW);
+-    const bool bAxes = aType != "pie";
+-    rJson.put("xtitle", bAxes ? lcl_Title(xProps, u"HasXAxisTitle"_ustr, [&xX] { return xX->getXAxisTitle(); }) : OUString());
+-    rJson.put("ytitle", bAxes ? lcl_Title(xProps, u"HasYAxisTitle"_ustr, [&xY] { return xY->getYAxisTitle(); }) : OUString());
+-}
+-
+ } // end sctools
+ 
+ /* vim:set shiftwidth=4 softtabstop=4 expandtab: */
+diff --git a/sc/source/ui/unoobj/docuno.cxx b/sc/source/ui/unoobj/docuno.cxx
+index b850504..cf42499 100644
+--- a/sc/source/ui/unoobj/docuno.cxx
++++ b/sc/source/ui/unoobj/docuno.cxx
+@@ -154,6 +154,7 @@
+ #include <output.hxx>
+ #include <stlpool.hxx>
+ #include <SheetViewManager.hxx>
++#include <svx/charthelper.hxx>
+ #include <ChartTools.hxx>
+ #include <dpobject.hxx>
+ #include <dpshttab.hxx>
+@@ -947,7 +948,7 @@ void lcl_Chart(tools::JsonWriter& rJson, ScDocument& rDoc, ScViewData& rData)
+     rJson.put("range", aRange);
+     rJson.put("colHeaders", bColHeaders);
+     rJson.put("rowHeaders", bRowHeaders);
+-    sctools::writeChartLook(rJson, rDoc.GetChartByName(aName));
++    ChartHelper::WriteChartLook(rJson, rDoc.GetChartByName(aName));
+ }
+ 
+ /// A repeated row or column span, 1-based.

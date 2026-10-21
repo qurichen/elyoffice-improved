@@ -1,0 +1,32 @@
+DrawingML charts: initialize omitted varyColors for modern documents
+
+Modern Excel treats an omitted c:varyColors as enabled. The importer used
+false for the absent element while using true when the element existed
+without val. This flattened single-series bar and pie charts to one color.
+
+Initialize classic-chart models using the modern/Office-2007 distinction
+from the Boolean parser. Explicit false/true continue to override it.
+Do not apply classic-chart defaults to unrelated ChartEx models.
+Keep chart-type and multiple-series restrictions in the converter; do not
+change the theme palette, automatic styles or explicit shape formatting.
+
+diff --git a/oox/source/drawingml/chart/typegroupmodel.cxx b/oox/source/drawingml/chart/typegroupmodel.cxx
+--- a/oox/source/drawingml/chart/typegroupmodel.cxx
++++ b/oox/source/drawingml/chart/typegroupmodel.cxx
+@@ -23,6 +23,7 @@
+  */
+ 
+ #include <drawingml/chart/typegroupmodel.hxx>
++#include <oox/token/namespaces.hxx>
+ #include <oox/token/tokens.hxx>
+ 
+ namespace oox::drawingml::chart {
+@@ -53,7 +53,7 @@
+     mbShowMarker( !bMSO2007Doc ),
+     mbShowNegBubbles( !bMSO2007Doc ),
+     mbSmooth( !bMSO2007Doc ),
+-    mbVaryColors( false ),
++    mbVaryColors( !bMSO2007Doc && getNamespace(nTypeId) == NMSP_dmlChart ),
+     mbWireframe( !bMSO2007Doc )
+ {
+ }

@@ -1,0 +1,324 @@
+diff --git a/sc/sdi/scalc.sdi b/sc/sdi/scalc.sdi
+index e49325020..636c1c1a4 100644
+--- a/sc/sdi/scalc.sdi
++++ b/sc/sdi/scalc.sdi
+@@ -1124,7 +1124,7 @@ SfxVoidItem DataFilterStandardFilter SID_FILTER
+ 
+ 
+ SfxVoidItem DataPilotExec SID_PIVOT_TABLE
+-()
++(SfxStringItem Pivot FN_PARAM_1)
+ [
+     AutoUpdate = FALSE,
+     FastCall = FALSE,
+diff --git a/sc/source/ui/view/cellsh2.cxx b/sc/source/ui/view/cellsh2.cxx
+index 5dd6e0793..11d4d1bf1 100644
+--- a/sc/source/ui/view/cellsh2.cxx
++++ b/sc/source/ui/view/cellsh2.cxx
+@@ -70,6 +70,13 @@
+ #include <boost/property_tree/json_parser.hpp>
+ #include <com/sun/star/sheet/TableValidationVisibility.hpp>
+ #include <markdata.hxx>
++#include <kitpivot.hxx>
++#include <com/sun/star/sheet/DataPilotFieldSortMode.hpp>
++#include <dpobject.hxx>
++#include <dpsave.hxx>
++#include <dpshttab.hxx>
++#include <dputil.hxx>
++#include <pivot.hxx>
+ #include <documentlinkmgr.hxx>
+ #include <officecfg/Office/Common.hxx>
+ 
+@@ -451,6 +458,147 @@ bool lcl_Query(ScTabViewShell& rView, ScViewData& rData, const boost::property_t
+ }
+ }
+ 
++namespace
++{
++/// Makes or changes the pivot table a kit client describes.
++bool lcl_KitPivot(ScTabViewShell& rShell, ScViewData& rData, const OUString& rJson)
++{
++    boost::property_tree::ptree aTree;
++    std::stringstream aStream{ std::string(rJson.toUtf8()) };
++    try
++    {
++        boost::property_tree::read_json(aStream, aTree);
++    }
++    catch (const boost::property_tree::json_parser_error&)
++    {
++        return false;
++    }
++    ScDocument& rDoc = rData.GetDocument();
++    const ScAddress aCursor(rData.GetCurX(), rData.GetCurY(), rData.CurrentTabForData());
++    // On a pivot table: change it; else make one.
++    std::unique_ptr<ScDPObject> pObj;
++    if (const ScDPObject* pOld = rDoc.GetDPAtCursor(aCursor))
++        pObj = std::make_unique<ScDPObject>(*pOld);
++    else
++    {
++        ScRange aSource;
++        const ScAddress::Details aDetails(rDoc.GetAddressConvention(), 0, 0);
++        const OUString aText = OUString::fromUtf8(aTree.get<std::string>("source", ""));
++        if (!(aSource.ParseAny(aText, rDoc, aDetails) & ScRefFlags::VALID))
++            return false;
++        ScSheetSourceDesc aDesc(&rDoc);
++        aDesc.SetSourceRange(aSource);
++        if (aDesc.CheckSourceRange())
++            return false;
++        pObj = std::make_unique<ScDPObject>(&rDoc);
++        pObj->SetSheetDesc(aDesc);
++        pObj->SetOutRange(ScRange(aCursor));
++    }
++    ScPivotParam aParam;
++    pObj->FillOldParam(aParam);
++    pObj->FillLabelData(aParam);
++    // The named fields, as the layout dialog lists them.
++    auto aFields = [&aTree, &aParam](const char* pKey, bool bData, ScPivotFieldVector& rOut)
++    {
++        static const boost::property_tree::ptree aNone;
++        for (const auto& [rKey, rEntry] : aTree.get_child(pKey, aNone))
++        {
++            const OUString aName = OUString::fromUtf8(
++                bData ? rEntry.get<std::string>("field", "") : rEntry.get_value<std::string>());
++            // An empty name places the data layout field.
++            if (!bData && aName.isEmpty())
++            {
++                rOut.push_back(ScPivotField(PIVOT_DATA_FIELD));
++                continue;
++            }
++            const auto pLabel = std::find_if(
++                aParam.maLabelArray.begin(), aParam.maLabelArray.end(),
++                [&aName](const auto& rLabel) { return !rLabel->mbDataLayout && rLabel->maName == aName; });
++            if (pLabel == aParam.maLabelArray.end())
++                return false;
++            ScPivotField aField((*pLabel)->mnCol);
++            if (bData)
++            {
++                const std::string aFunc = rEntry.get<std::string>("function", "");
++                const auto pFunc = std::find_if(std::begin(aKitPivotFuncs), std::end(aKitPivotFuncs),
++                                                [&aFunc](const auto& rPair) { return rPair.first == aFunc; });
++                if (pFunc == std::end(aKitPivotFuncs))
++                    return false;
++                aField.nFuncMask = pFunc->second;
++            }
++            else
++            {
++                // A field already placed keeps its subtotals.
++                for (const ScPivotFieldVector* pPlaced : { &aParam.maRowFields, &aParam.maColFields, &aParam.maPageFields })
++                    for (const ScPivotField& rPlaced : *pPlaced)
++                        if (rPlaced.nCol == aField.nCol)
++                            aField.nFuncMask = rPlaced.nFuncMask;
++            }
++            rOut.push_back(aField);
++        }
++        return true;
++    };
++    ScPivotFieldVector aPages, aColumns, aRows, aData;
++    if (!aFields("pages", false, aPages) || !aFields("columns", false, aColumns)
++        || !aFields("rows", false, aRows) || !aFields("data", true, aData) || aData.empty())
++        return false;
++    // Options as the dialog starts them.
++    ScDPSaveData aSave;
++    const ScDPSaveData* pOldSave = pObj->GetSaveData();
++    aSave.SetFilterButton(pOldSave && pOldSave->GetFilterButton());
++    aSave.SetDrillDown(pOldSave && pOldSave->GetDrillDown());
++    aSave.SetExpandCollapse(pOldSave && pOldSave->GetExpandCollapse());
++    aSave.SetIgnoreEmptyRows(aParam.bIgnoreEmptyRows);
++    aSave.SetRepeatIfEmpty(aParam.bDetectCategories);
++    aSave.SetColumnGrand(aParam.bMakeTotalCol);
++    aSave.SetRowGrand(aParam.bMakeTotalRow);
++    const auto xSource = pObj->GetSource();
++    using css::sheet::DataPilotFieldOrientation_PAGE, css::sheet::DataPilotFieldOrientation_COLUMN,
++        css::sheet::DataPilotFieldOrientation_ROW, css::sheet::DataPilotFieldOrientation_DATA;
++    ScDPObject::ConvertOrientation(aSave, aPages, DataPilotFieldOrientation_PAGE, xSource, aParam.maLabelArray);
++    ScDPObject::ConvertOrientation(aSave, aColumns, DataPilotFieldOrientation_COLUMN, xSource, aParam.maLabelArray);
++    ScDPObject::ConvertOrientation(aSave, aRows, DataPilotFieldOrientation_ROW, xSource, aParam.maLabelArray);
++    ScDPObject::ConvertOrientation(aSave, aData, DataPilotFieldOrientation_DATA, xSource, aParam.maLabelArray,
++                                   &aColumns, &aRows, &aPages);
++    // Keep members, sort and layout, as the dialog does.
++    for (const auto& pLabel : aParam.maLabelArray)
++    {
++        ScDPSaveDimension* pDim = aSave.GetExistingDimensionByName(
++            ScDPUtil::createDuplicateDimensionName(pLabel->maName, pLabel->mnDupCount));
++        if (!pDim)
++            continue;
++        pDim->SetUsedHierarchy(pLabel->mnUsedHier);
++        pDim->SetShowEmpty(pLabel->mbShowAll);
++        pDim->SetRepeatItemLabels(pLabel->mbRepeatItemLabels);
++        pDim->SetSortInfo(&pLabel->maSortInfo);
++        pDim->SetLayoutInfo(&pLabel->maLayoutInfo);
++        pDim->SetAutoShowInfo(&pLabel->maShowInfo);
++        const bool bManualSort = pLabel->maSortInfo.Mode == css::sheet::DataPilotFieldSortMode::MANUAL;
++        for (const ScDPLabelData::Member& rMember : pLabel->maMembers)
++        {
++            if (!bManualSort && rMember.mbVisible && rMember.mbShowDetails)
++                continue;
++            ScDPSaveMember* pMember = pDim->GetMemberByName(rMember.maName);
++            pMember->SetIsVisible(rMember.mbVisible);
++            pMember->SetShowDetails(rMember.mbShowDetails);
++        }
++    }
++    // "dest": a cell; empty for a new sheet.
++    const OUString aDest = OUString::fromUtf8(aTree.get<std::string>("dest", ""));
++    ScRange aDestRange(pObj->GetOutRange().aStart);
++    const bool bEdit = rDoc.GetDPAtCursor(aCursor) != nullptr;
++    if (!bEdit && !aDest.isEmpty())
++    {
++        ScAddress aAt;
++        const ScAddress::Details aDetails(rDoc.GetAddressConvention(), 0, 0);
++        if (!(aAt.Parse(aDest, rDoc, aDetails) & ScRefFlags::VALID))
++            return false;
++        aDestRange = ScRange(aAt);
++    }
++    return rShell.MakePivotTable(aSave, aDestRange, !bEdit && aDest.isEmpty(), *pObj);
++}
++}
++
+ void ScCellShell::ExecuteDB( SfxRequest& rReq )
+ {
+     ScTabViewShell* pTabViewShell   = GetViewData().GetViewShell();
+@@ -948,7 +1096,15 @@ void ScCellShell::ExecuteDB( SfxRequest& rReq )
+         case SID_PIVOT_TABLE:
+             {
+                 const ScPivotItem* pPItem;
+-                if ( pReqArgs && (pPItem =
++                const SfxStringItem* pPivot = rReq.GetArg<SfxStringItem>(FN_PARAM_1);
++                if (pPivot)
++                {
++                    const bool bMade = lcl_KitPivot(*pTabViewShell, GetViewData(), pPivot->GetValue());
++                    SAL_WARN_IF(!bMade, "sc.lok", "pivot not made: " << pPivot->GetValue());
++                    rReq.SetReturnValue(SfxBoolItem(0, bMade));
++                    rReq.Done();
++                }
++                else if ( pReqArgs && (pPItem =
+                         pReqArgs->GetItemIfSet( SCITEM_PIVOTDATA )) )
+                 {
+                     SCTAB nCurTab = GetViewData().CurrentTabForData();
+diff --git a/sc/source/ui/unoobj/docuno.cxx b/sc/source/ui/unoobj/docuno.cxx
+index 50582b5e4..7a0a1e54c 100644
+--- a/sc/source/ui/unoobj/docuno.cxx
++++ b/sc/source/ui/unoobj/docuno.cxx
+@@ -154,6 +154,10 @@
+ #include <output.hxx>
+ #include <stlpool.hxx>
+ #include <SheetViewManager.hxx>
++#include <dpobject.hxx>
++#include <dpshttab.hxx>
++#include <kitpivot.hxx>
++#include <pivot.hxx>
+ 
+ #include <strings.hrc>
+ 
+@@ -909,6 +913,56 @@ void lcl_ConditionalFormats(tools::JsonWriter& rJson, ScDocument& rDoc, SCTAB nT
+         }
+     }
+ }
++
++/// The pivot table at the cursor: ranges and fields.
++void lcl_PivotTable(tools::JsonWriter& rJson, ScDocument& rDoc, const ScAddress& rCursor)
++{
++    rJson.put("commandName", ".uno:PivotTable");
++    const ScDPObject* pFound = rDoc.GetDPAtCursor(rCursor);
++    if (!pFound)
++        return;
++    ScDPObject aObj(*pFound);
++    ScPivotParam aParam;
++    aObj.FillOldParam(aParam);
++    aObj.FillLabelData(aParam);
++    const ScAddress::Details aDetails(rDoc.GetAddressConvention(), 0, 0);
++    rJson.put("name", aObj.GetName());
++    rJson.put("range", aObj.GetOutRange().Format(rDoc, ScRefFlags::RANGE_ABS_3D, aDetails));
++    const ScSheetSourceDesc* pDesc = aObj.GetSheetDesc();
++    rJson.put("source", pDesc ? pDesc->GetSourceRange().Format(rDoc, ScRefFlags::RANGE_ABS_3D, aDetails)
++                              : OUString());
++    auto aNameOf = [&aParam](const ScPivotField& rField)
++    {
++        for (const auto& pLabel : aParam.maLabelArray)
++            if (pLabel->mnCol == rField.getOriginalDim())
++                return pLabel->maName;
++        return OUString();
++    };
++    {
++        auto aFields = rJson.startArray("fields");
++        for (const auto& pLabel : aParam.maLabelArray)
++            if (!pLabel->mbDataLayout && pLabel->mnOriginalDim < 0)
++                rJson.putSimpleValue(pLabel->maName);
++    }
++    for (const auto& [pKey, pFields] : { std::pair("rows", &aParam.maRowFields),
++                                        std::pair("columns", &aParam.maColFields),
++                                        std::pair("pages", &aParam.maPageFields) })
++    {
++        auto aNames = rJson.startArray(pKey);
++        // The data layout field reads as an empty name.
++        for (const ScPivotField& rField : *pFields)
++            rJson.putSimpleValue(rField.nCol == PIVOT_DATA_FIELD ? OUString() : aNameOf(rField));
++    }
++    auto aData = rJson.startArray("data");
++    for (const ScPivotField& rField : aParam.maDataFields)
++    {
++        auto aField = rJson.startStruct();
++        rJson.put("field", aNameOf(rField));
++        const auto pFunc = std::find_if(std::begin(aKitPivotFuncs), std::end(aKitPivotFuncs),
++                                        [&rField](const auto& rPair) { return rPair.second == rField.nFuncMask; });
++        rJson.put("function", pFunc != std::end(aKitPivotFuncs) ? pFunc->first : std::string_view("other"));
++    }
++}
+ }
+ 
+ bool ScModelObj::supportsCommand(std::u16string_view rCommand)
+@@ -916,7 +970,7 @@ bool ScModelObj::supportsCommand(std::u16string_view rCommand)
+     static constexpr std::u16string_view aCommands[]
+         = { u"SheetReferences",  u"DefinedNames",       u"SelectedRange",
+             u"AutoFilterValues", u"DataSelectValues",   u"Validation",
+-            u"NumberFormatCode", u"ConditionalFormats" };
++            u"NumberFormatCode", u"ConditionalFormats", u"PivotTable" };
+     return std::find(std::begin(aCommands), std::end(aCommands), rCommand) != std::end(aCommands);
+ }
+ 
+@@ -949,6 +1003,8 @@ void ScModelObj::getCommandValues(tools::JsonWriter& rJsonWriter, std::string_vi
+             return lcl_NumberFormat(rJsonWriter, rDoc, aCursor, rCommand);
+         if (rCommand == ".uno:ConditionalFormats")
+             return lcl_ConditionalFormats(rJsonWriter, rDoc, nTab);
++        if (rCommand == ".uno:PivotTable")
++            return lcl_PivotTable(rJsonWriter, rDoc, aCursor);
+     }
+     if (pDocShell && rCommand == ".uno:SelectedRange")
+     {
+@@ -985,6 +1041,8 @@ void ScModelObj::getCommandValues(tools::JsonWriter& rJsonWriter, std::string_vi
+                 rJsonWriter.putSimpleValue(rDoc.GetString(nCol, nRow1, nTab));
+         }
+         rJsonWriter.put("header", rDoc.HasColHeader(nCol1, nRow1, nCol2, nRow2, nTab));
++        rJsonWriter.put("data", ScRange(nCol1, nRow1, nTab, nCol2, nRow2, nTab)
++                                    .Format(rDoc, ScRefFlags::RANGE_ABS_3D, aDetails));
+         return;
+     }
+     if (pDocShell && o3tl::starts_with(rCommand, ".uno:DefinedNames?"))
+diff --git a/sc/source/ui/inc/kitpivot.hxx b/sc/source/ui/inc/kitpivot.hxx
+new file mode 100644
+index 000000000..79a6e5c05
+--- /dev/null
++++ b/sc/source/ui/inc/kitpivot.hxx
+@@ -0,0 +1,23 @@
++/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++/*
++ * This file is part of the LibreOffice project.
++ *
++ * This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
++ */
++
++#pragma once
++
++#include <dpglobal.hxx>
++
++#include <string_view>
++#include <utility>
++
++/// Pivot data functions by their kit client names.
++constexpr std::pair<std::string_view, PivotFunc> aKitPivotFuncs[]
++    = { { "sum", PivotFunc::Sum },     { "count", PivotFunc::Count },
++        { "average", PivotFunc::Average }, { "max", PivotFunc::Max },
++        { "min", PivotFunc::Min } };
++
++/* vim:set shiftwidth=4 softtabstop=4 expandtab: */

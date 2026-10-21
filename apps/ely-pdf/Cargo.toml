@@ -1,0 +1,33 @@
+[package]
+name = "ely-pdf"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+build = "../../packaging/windows/icon.rs"
+
+[build-dependencies]
+embed-resource.workspace = true
+
+[dependencies]
+ely-files.workspace = true
+ely-gpui-component.workspace = true
+ely-office.workspace = true
+ely-pdf-engine.workspace = true
+ely-platform.workspace = true
+ely-ui.workspace = true
+gpui.workspace = true
+image.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+dunce.workspace = true
+ely-ui = { workspace = true, features = ["test-support"] }
+ely-pdf-engine = { workspace = true, features = ["test-support"] }
+ely-gpui-component = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,70 @@
+macOS Skia: no unused font manager on the first text draw
+
+AquaSkiaSalGraphicsImpl::drawTextLayout built a static SkFontMgr from a
+fresh CoreText list of every system font the first time it drew text.
+Nothing reads it: the typeface comes from the CTFont itself. Building
+it enumerated and sorted all system fonts on the main thread, about
+175 ms with 370 fonts, so the first character typed into a new
+document (or the first text painted) landed late.
+
+diff --git a/vcl/inc/skia/osx/gdiimpl.hxx b/vcl/inc/skia/osx/gdiimpl.hxx
+index 6e1656e59..29aa5a46e 100644
+--- a/vcl/inc/skia/osx/gdiimpl.hxx
++++ b/vcl/inc/skia/osx/gdiimpl.hxx
+@@ -16,7 +16,6 @@
+ #include <skia/gdiimpl.hxx>
+ #include <skia/utils.hxx>
+ 
+-#include <SkFontMgr.h>
+ 
+ class VCL_PLUGIN_PUBLIC AquaSkiaSalGraphicsImpl final : public SkiaSalGraphicsImpl,
+                                                         public AquaGraphicsBackendBase
+@@ -48,7 +47,6 @@ private:
+     virtual int getWindowScaling() const override;
+     virtual void createWindowSurfaceInternal(bool forceRaster = false) override;
+     virtual void flushSurfaceToWindowContext() override;
+-    static inline sk_sp<SkFontMgr> fontManager;
+ };
+ 
+ /* vim:set shiftwidth=4 softtabstop=4 expandtab: */
+diff --git a/vcl/skia/osx/gdiimpl.cxx b/vcl/skia/osx/gdiimpl.cxx
+index 8043fb2e2..b6b856c76 100644
+--- a/vcl/skia/osx/gdiimpl.cxx
++++ b/vcl/skia/osx/gdiimpl.cxx
+@@ -26,7 +26,6 @@
+ //#include <tools/window/mac/WindowContextFactory_mac.h>
+ 
+ #include <quartz/CoreTextFont.hxx>
+-#include <quartz/SystemFontList.hxx>
+ #include <osx/salnativewidgets.h>
+ #include <skia/quartz/cgutils.h>
+ #include <tools/window/mac/MacWindowInfo.h>
+@@ -35,7 +34,6 @@
+ #include <SkBitmap.h>
+ #include <SkCanvas.h>
+ #include <SkFont.h>
+-#include <SkFontMgr_mac_ct.h>
+ #include <SkTypeface_mac.h>
+ 
+ using namespace SkiaHelper;
+@@ -367,20 +365,6 @@ void AquaSkiaSalGraphicsImpl::drawTextLayout(const GenericSalLayout& rLayout)
+         return;
+     }
+ 
+-    if (!fontManager)
+-    {
+-        std::unique_ptr<SystemFontList> fontList = GetCoretextFontList();
+-        if (fontList == nullptr)
+-        {
+-            SAL_WARN("vcl.skia", "DrawTextLayout(): No coretext font list");
+-            fontManager = SkFontMgr_New_CoreText(nullptr);
+-        }
+-        else
+-        {
+-            fontManager = SkFontMgr_New_CoreText(fontList->fontCollection());
+-        }
+-    }
+-
+     sk_sp<SkTypeface> typeface = SkMakeTypefaceFromCTFont(rFont.GetCTFont());
+     SkFont font(typeface);
+     font.setSize(nHeight);

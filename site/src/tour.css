@@ -1,0 +1,248 @@
+/* One stage pins while the camera visits each app. */
+.tour {
+  --span: 100svh;
+  position: relative;
+  height: calc(var(--span) * 8);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+.pin {
+  position: sticky;
+  top: 0;
+  height: var(--span);
+  overflow: clip;
+}
+
+.pin .hero {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 1;
+}
+
+.pin .model {
+  position: absolute;
+  inset: 0;
+  max-width: none;
+}
+
+.world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.world .stage {
+  max-width: none;
+}
+
+.stop {
+  position: absolute;
+  left: 0;
+  width: 1px;
+  height: 1px;
+}
+
+/* Screen rows land on sixteenths as the reader arrives. */
+.grow .block.slab {
+  animation: none;
+}
+
+.block.slab {
+  opacity: 0;
+  visibility: hidden;
+  translate: 0 calc(-1 * var(--step));
+  transition:
+    opacity 0.1s ease-out,
+    translate 0.1s ease-out,
+    visibility 0s 0.1s;
+}
+
+.block.slab.up {
+  opacity: 1;
+  visibility: visible;
+  translate: 0 0;
+  transition:
+    opacity 0.2s cubic-bezier(0.2, 0.8, 0.3, 1) var(--at),
+    translate 0.2s cubic-bezier(0.2, 0.8, 0.3, 1) var(--at);
+}
+
+.clip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 320px;
+  height: 180px;
+  object-fit: fill;
+  transform-origin: 0 0;
+  cursor: pointer;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.1s ease-out,
+    visibility 0s 0.1s;
+}
+
+.clip.up {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.2s ease-out var(--at);
+}
+
+/* The copy owns a plain strip beside the model. */
+.copy {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 1;
+  display: grid;
+  align-items: center;
+  box-sizing: border-box;
+  width: 38%;
+  padding: 0 3vw 0 7vw;
+  background: var(--page);
+  translate: -100% 0;
+  transition: translate 0.2s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+.touring .copy {
+  translate: 0 0;
+}
+
+:root[data-theme="dark"] {
+  --page: #252525;
+}
+
+.copy article {
+  display: grid;
+  grid-area: 1 / 1;
+  gap: 1rem;
+  justify-items: start;
+  align-content: center;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.15s ease-out,
+    visibility 0s 0.15s;
+}
+
+.copy article.current {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.2s ease-out 0.1s;
+}
+
+.acts {
+  display: flex;
+  gap: 2rem;
+  align-items: baseline;
+}
+
+.get,
+.toggle-clip {
+  font-size: 1.0625rem;
+  opacity: 0;
+  transition: opacity 0.15s ease-out;
+}
+
+.toggle-clip {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 1.0625rem;
+  font-weight: 300;
+  color: var(--quiet);
+  cursor: pointer;
+}
+
+.copy:hover :is(.get, .toggle-clip),
+.copy article:focus-within :is(.get, .toggle-clip) {
+  opacity: 1;
+}
+
+.rail {
+  position: absolute;
+  top: 50%;
+  right: 2rem;
+  z-index: 1;
+  display: grid;
+  gap: 0.5rem;
+  translate: 0 -50%;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.15s ease-out,
+    visibility 0s 0.15s;
+}
+
+.touring .rail {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.2s ease-out;
+}
+
+.rail a {
+  display: block;
+  padding: 0.25rem;
+}
+
+.rail .stage {
+  width: 1.25rem;
+}
+
+.rail .block {
+  transition: translate 0.15s ease-out;
+}
+
+.rail a:hover .block,
+.rail a:focus-visible .block {
+  translate: 0 -4px;
+}
+
+.rail a[aria-current] .block {
+  --ink: var(--accent);
+}
+
+@media (hover: none) {
+  .get,
+  .toggle-clip {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 760px) {
+  .copy {
+    inset: 58% 0 0;
+    align-items: start;
+    width: auto;
+    padding: 2rem 1.5rem 0;
+    translate: 0 100%;
+  }
+
+  .rail {
+    top: 30%;
+    right: 0.75rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .copy,
+  .block.slab,
+  .block.slab.up,
+  .clip,
+  .clip.up,
+  .copy article,
+  .copy article.current,
+  .rail,
+  .touring .rail,
+  .rail .block,
+  .get,
+  .toggle-clip {
+    transition: none;
+  }
+}

@@ -1,0 +1,22 @@
+DrawingML: keep the model identity of theme hyperlink colors
+
+The programmatic hlink color choice set the color token but not its name.
+Character-property conversion uses that name for complex theme colors.
+Set both, as the XML color parser does, so export keeps schemeClr=hlink.
+Explicit tx colors are untouched; no original XML is replayed.
+
+diff --git a/oox/source/drawingml/textrun.cxx b/oox/source/drawingml/textrun.cxx
+index 1160e36..3b5fb48 100644
+--- a/oox/source/drawingml/textrun.cxx
++++ b/oox/source/drawingml/textrun.cxx
+@@ -160,7 +160,10 @@ sal_Int32 TextRun::insertAt(
+                 xTextFieldCursor->gotoEnd( true );
+ 
+                 if (!maTextCharacterProperties.maHyperlinkPropertyMap.hasProperty(PROP_CharColor))
++                {
+                     aTextCharacterProps.maFillProperties.maFillColor.setSchemeClr(XML_hlink);
++                    aTextCharacterProps.maFillProperties.maFillColor.setSchemeName(u"hlink"_ustr);
++                }
+ 
+                 aTextCharacterProps.maFillProperties.moFillType = XML_solidFill;
+                 if ( !maTextCharacterProperties.moUnderline.has_value() )

@@ -1,0 +1,132 @@
+DrawingML: preserve hyperlink text colors in PPTX
+
+Import the 2018 hyperlink color extension by its namespace and value,
+not merely by the presence of extLst. Only val=tx uses the run color;
+val=hlink, absent and unrelated extensions keep the theme hyperlink color.
+
+PPTX URL text fields export their model color with hlinkClr=tx. Without
+that marker PowerPoint ignores the saved run color and uses the theme's
+hyperlink color. Theme-derived model colors remain scheme colors.
+This covers external links, slide links and presentation actions.
+
+Regression: tests/fixtures/office/hyperlink-colors.pptx, client/tests/hyperlink.rs
+and tests/scripts/hyperlink-colors.py in ElyOffice. The stock 0.1.8 engine
+fails import for hlink mode and unrelated extensions, and loses tx on export.
+The patch has not been built into a new LibreOffice binary on this host.
+
+diff --git a/oox/source/drawingml/hyperlinkcontext.cxx b/oox/source/drawingml/hyperlinkcontext.cxx
+index 692ad0f..e2d5364 100644
+--- a/oox/source/drawingml/hyperlinkcontext.cxx
++++ b/oox/source/drawingml/hyperlinkcontext.cxx
+@@ -160,12 +160,16 @@ HyperLinkContext::~HyperLinkContext()
+ }
+ 
+ ContextHandlerRef HyperLinkContext::onCreateContext(
+-        ::sal_Int32 aElement, const AttributeList&  )
++        ::sal_Int32 aElement, const AttributeList& rAttribs )
+ {
+     switch( aElement )
+     {
+     case A_TOKEN( extLst ):
+-        maProperties.setProperty(PROP_CharColor, XML_fillcolor);
++    case A_TOKEN( ext ):
++        break;
++    case OOX_TOKEN(ahyp, hlinkClr):
++        if (rAttribs.getToken(XML_val, XML_hlink) == XML_tx)
++            maProperties.setProperty(PROP_CharColor, XML_fillcolor);
+         break;
+     case A_TOKEN( snd ):
+         // TODO use getEmbeddedWAVAudioFile() here
+diff --git a/oox/source/export/drawingml.cxx b/oox/source/export/drawingml.cxx
+index 67e73f0..3a254f6 100644
+--- a/oox/source/export/drawingml.cxx
++++ b/oox/source/export/drawingml.cxx
+@@ -2865,6 +2865,19 @@ void DrawingML::WriteRunProperties(const Reference<XPropertySet>& rRun, sal_Int3
+             rXPropSet.set( rXTextField, UNO_QUERY );
+     }
+ 
++    auto writeHyperlinkColor = [&]() {
++        if (!rRunInput.bIsField || GetDocumentType() != DOCUMENT_PPTX)
++            return;
++        mpFS->startElementNS(XML_a, XML_extLst);
++        mpFS->startElementNS(XML_a, XML_ext, XML_uri,
++                             "{A12FA001-AC4F-418D-AE19-62706E023703}");
++        mpFS->singleElementNS(XML_ahyp, XML_hlinkClr,
++                              FSNS(XML_xmlns, XML_ahyp),
++                              mpFB->getNamespaceURL(OOX_NS(ahyp)), XML_val, "tx");
++        mpFS->endElementNS(XML_a, XML_ext);
++        mpFS->endElementNS(XML_a, XML_extLst);
++    };
++
+     // field properties starts here
+     if (GetProperty(rXPropSet, u"URL"_ustr))
+     {
+@@ -2888,18 +2901,22 @@ void DrawingML::WriteRunProperties(const Reference<XPropertySet>& rRun, sal_Int3
+                                             sURL, bExtURL);
+                 }
+                 if (bExtURL)
+-                    mpFS->singleElementNS(XML_a, XML_hlinkClick, FSNS(XML_r, XML_id), sRelId);
++                    mpFS->startElementNS(XML_a, XML_hlinkClick, FSNS(XML_r, XML_id), sRelId);
+                 else
+-                    mpFS->singleElementNS(
++                    mpFS->startElementNS(
+                         XML_a, XML_hlinkClick, FSNS(XML_r, XML_id), sRelId, XML_action,
+                         sURL.isEmpty() ? "ppaction://noaction" : "ppaction://hlinksldjump");
++                writeHyperlinkColor();
++                mpFS->endElementNS(XML_a, XML_hlinkClick);
+             }
+             else
+             {
+                 sal_Int32 nIndex = sURL.indexOf('=');
+                 std::u16string_view aDestination(sURL.subView(nIndex + 1));
+-                mpFS->singleElementNS(XML_a, XML_hlinkClick, FSNS(XML_r, XML_id), "", XML_action,
++                mpFS->startElementNS(XML_a, XML_hlinkClick, FSNS(XML_r, XML_id), "", XML_action,
+                                       OUString::Concat("ppaction://hlinkshowjump?jump=") + aDestination);
++                writeHyperlinkColor();
++                mpFS->endElementNS(XML_a, XML_hlinkClick);
+             }
+         }
+     }
+diff --git a/oox/source/token/namespaces-strict.txt b/oox/source/token/namespaces-strict.txt
+--- a/oox/source/token/namespaces-strict.txt
++++ b/oox/source/token/namespaces-strict.txt
+@@ -106,6 +106,7 @@ a16                     http://schemas.microsoft.com/office/drawing/2014/main
+ # extlst namespaces
+ 
+ adec                    http://schemas.microsoft.com/office/drawing/2017/decorative
++ahyp                    http://schemas.microsoft.com/office/drawing/2018/hyperlinkcolor
+ asvg                    http://schemas.microsoft.com/office/drawing/2016/SVG/main
+ 
+ # xls14Lst for features introduced by excel 2010
+diff --git a/oox/source/token/namespaces.txt b/oox/source/token/namespaces.txt
+index 9617c74..8c82db6 100644
+--- a/oox/source/token/namespaces.txt
++++ b/oox/source/token/namespaces.txt
+@@ -106,6 +106,7 @@ a16                     http://schemas.microsoft.com/office/drawing/2014/main
+ # extlst namespaces
+ 
+ adec                    http://schemas.microsoft.com/office/drawing/2017/decorative
++ahyp                    http://schemas.microsoft.com/office/drawing/2018/hyperlinkcolor
+ asvg                    http://schemas.microsoft.com/office/drawing/2016/SVG/main
+ 
+ # xls14Lst for features introduced by excel 2010
+diff --git a/oox/source/token/tokens.txt b/oox/source/token/tokens.txt
+index 1eb24e1..2e040af 100644
+--- a/oox/source/token/tokens.txt
++++ b/oox/source/token/tokens.txt
+@@ -503,6 +503,7 @@ afterLines
+ ahLst
+ ahPolar
+ ahXY
++ahyp
+ aiueo
+ aiueoFullWidth
+ alg
+@@ -2747,6 +2748,7 @@ hiragana
+ history
+ hlink
+ hlinkClick
++hlinkClr
+ hlinkHover
+ hlinkMouseOver
+ hold

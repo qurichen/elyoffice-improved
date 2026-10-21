@@ -1,0 +1,106 @@
+Writer: import and export East Asian character compression
+
+DOCX characterSpacingControl was ignored on import and absent on export.
+Map the three valid modes onto the existing CharacterCompressionType
+setting, and serialize the actual model setting back into DOCX.
+An absent setting leaves the existing document default alone, including
+RTF imports. Do not replace layout data with original document XML.
+
+The regression covers none, punctuation, punctuation plus Japanese kana,
+and the omitted default. It reads flat-ODF model settings before and
+after DOCX, so retaining only an XML token cannot hide a broken import.
+A rebuilt C++ engine still needs to run the new regression test.
+
+diff --git a/sw/source/filter/ww8/docxexport.cxx b/sw/source/filter/ww8/docxexport.cxx
+index d06f58e..9e62ff4 100644
+--- a/sw/source/filter/ww8/docxexport.cxx
++++ b/sw/source/filter/ww8/docxexport.cxx
+@@ -100,6 +100,7 @@
+ #include <comphelper/sequenceashashmap.hxx>
+ #include <o3tl/any.hxx>
+ #include <sal/log.hxx>
++#include <svl/asiancfg.hxx>
+ #include <unotools/ucbstreamhelper.hxx>
+ #include <comphelper/diagnose_ex.hxx>
+ #include <unotxdoc.hxx>
+@@ -1455,6 +1456,24 @@ void DocxExport::WriteSettings()
+     if( m_aSettings.evenAndOddHeaders )
+         pFS->singleElementNS(XML_w, XML_evenAndOddHeaders);
+ 
++    const char* pCharacterSpacing;
++    switch (m_rDoc.getIDocumentSettingAccess().getCharacterCompressionType())
++    {
++        case CharCompressType::NONE:
++            pCharacterSpacing = "doNotCompress";
++            break;
++        case CharCompressType::PunctuationOnly:
++            pCharacterSpacing = "compressPunctuation";
++            break;
++        case CharCompressType::PunctuationAndKana:
++            pCharacterSpacing = "compressPunctuationAndJapaneseKana";
++            break;
++        default:
++            throw uno::RuntimeException(u"Invalid character compression mode"_ustr);
++    }
++    pFS->singleElementNS(XML_w, XML_characterSpacingControl,
++                         FSNS(XML_w, XML_val), pCharacterSpacing);
++
+     // Has Footnotes
+     if( m_pAttrOutput->HasFootnotes())
+         m_pAttrOutput->WriteFootnoteEndnotePr( pFS, XML_footnotePr, m_rDoc.GetFootnoteInfo(), XML_footnote );
+diff --git a/sw/source/writerfilter/dmapper/SettingsTable.cxx b/sw/source/writerfilter/dmapper/SettingsTable.cxx
+index 64f8eba..fd67378 100644
+--- a/sw/source/writerfilter/dmapper/SettingsTable.cxx
++++ b/sw/source/writerfilter/dmapper/SettingsTable.cxx
+@@ -25,8 +25,10 @@
+ #include <vector>
+ 
+ #include <rtl/ustring.hxx>
++#include <sal/log.hxx>
+ #include <sfx2/zoomitem.hxx>
+ #include <com/sun/star/text/ParagraphHyphenationKeepType.hpp>
++#include <com/sun/star/text/CharacterCompressionType.hpp>
+ #include <com/sun/star/text/XDependentTextField.hpp>
+ #include <com/sun/star/text/XTextFieldsSupplier.hpp>
+ #include <com/sun/star/lang/XMultiServiceFactory.hpp>
+@@ -240,8 +242,15 @@ void SettingsTable::lcl_sprm(Sprm& rSprm)
+     case NS_ooxml::LN_CT_Settings_noPunctuationKerning: //  92526;
+     break;
+     case NS_ooxml::LN_CT_Settings_characterSpacingControl: //  92527;
+-     // doNotCompress, compressPunctuation, compressPunctuationAndJapaneseKana
+-    break;
++        if (sStringValue == "doNotCompress")
++            m_oCharacterCompressionType = text::CharacterCompressionType::NONE;
++        else if (sStringValue == "compressPunctuation")
++            m_oCharacterCompressionType = text::CharacterCompressionType::PUNCTUATION_ONLY;
++        else if (sStringValue == "compressPunctuationAndJapaneseKana")
++            m_oCharacterCompressionType = text::CharacterCompressionType::PUNCTUATION_AND_KANA;
++        else
++            SAL_WARN("writerfilter", "Invalid characterSpacingControl value");
++        break;
+     case NS_ooxml::LN_CT_Settings_doNotIncludeSubdocsInStats: //  92554; // Do Not Include Content in Text Boxes, Footnotes, and Endnotes in Document Statistics)
+     break;
+     case NS_ooxml::LN_CT_Settings_decimalSymbol: //  92562;
+@@ -623,6 +632,10 @@ void SettingsTable::ApplyProperties(rtl::Reference<SwXTextDocument> const& xDoc)
+         throw uno::RuntimeException();
+     rtl::Reference<SwXDocumentSettings> xDocumentSettings(xDoc->createDocumentSettings());
+ 
++    if (m_oCharacterCompressionType)
++        xDocumentSettings->setPropertyValue(u"CharacterCompressionType"_ustr,
++                                           uno::Any(*m_oCharacterCompressionType));
++
+     // Shared between DOCX and RTF, unconditional flags.
+     xDocumentSettings->setPropertyValue(u"TableRowKeep"_ustr, uno::Any(true));
+     xDocumentSettings->setPropertyValue(u"AddVerticalFrameOffsets"_ustr, uno::Any(true));
+diff --git a/sw/source/writerfilter/dmapper/SettingsTable.hxx b/sw/source/writerfilter/dmapper/SettingsTable.hxx
+index bcefc3a..4fcd829 100644
+--- a/sw/source/writerfilter/dmapper/SettingsTable.hxx
++++ b/sw/source/writerfilter/dmapper/SettingsTable.hxx
+@@ -153,6 +153,7 @@ private:
+     bool m_bBalanceSingleByteDoubleByteWidth = false;
+     bool m_bDisplayBackgroundShape;
+     bool m_bNoLeading = false;
++    std::optional<sal_Int16> m_oCharacterCompressionType;
+     OUString m_sDecimalSymbol;
+     OUString m_sListSeparator;
+     std::vector<std::pair<OUString, OUString>> m_aDocVars;

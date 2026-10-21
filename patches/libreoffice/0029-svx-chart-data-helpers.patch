@@ -1,0 +1,335 @@
+svx: chart data helpers a kit client can drive
+
+ChartHelper gains IsChartData, SetChartData and WriteChartData: a
+chart's own table under "data" as categories and series values. A
+ragged table, or a value that is not a number or null, is refused. A
+missing point reads and writes as null (the chart's own not-a-number
+marker). An XY chart's categories are its X values: they must be
+numbers and go in as numbers, not text. An XY chart whose series share
+one X list reads with X as categories, from the series roles, as a
+PPTX import has it; series with their own X lists are not one table and
+the read leaves "data" out. The trailing attachData is gone: each
+setter applies itself, and attachData put numbers back as text.
+
+diff --git a/include/svx/charthelper.hxx b/include/svx/charthelper.hxx
+index 9bdf0a6..1f7a6fb 100644
+--- a/include/svx/charthelper.hxx
++++ b/include/svx/charthelper.hxx
+@@ -63,6 +63,12 @@ public:
+                              std::u16string_view rJson);
+     static void WriteChartLook(::tools::JsonWriter& rJson,
+                                const css::uno::Reference<css::uno::XInterface>& xChart);
++    /// Own data under "data"; absent when not one table.
++    static bool IsChartData(std::u16string_view rJson);
++    static bool SetChartData(const css::uno::Reference<css::uno::XInterface>& xChart,
++                             std::u16string_view rJson);
++    static void WriteChartData(::tools::JsonWriter& rJson,
++                               const css::uno::Reference<css::uno::XInterface>& xChart);
+ };
+ 
+ #endif // INCLUDED_SVX_CHARTHELPER_HXX
+diff --git a/svx/Library_svxcore.mk b/svx/Library_svxcore.mk
+index 1dfa044..08daa4d 100644
+--- a/svx/Library_svxcore.mk
++++ b/svx/Library_svxcore.mk
+@@ -332,6 +332,7 @@ $(eval $(call gb_Library_add_exception_objects,svxcore,\
+     svx/source/sdr/properties/e3dcompoundproperties \
+     svx/source/sdr/properties/oleproperties \
+     svx/source/svdraw/charthelper \
++    svx/source/svdraw/chartdata \
+     svx/source/svdraw/chartlook \
+     svx/source/svdraw/constructhelper \
+     svx/source/svdraw/clonelist \
+diff --git a/svx/source/svdraw/chartdata.cxx b/svx/source/svdraw/chartdata.cxx
+new file mode 100644
+index 0000000..5bf412e
+--- /dev/null
++++ b/svx/source/svdraw/chartdata.cxx
+@@ -0,0 +1,287 @@
++/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++/*
++ * This file is part of the LibreOffice project.
++ *
++ * This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
++ */
++
++#include <svx/charthelper.hxx>
++#include "chartjson.hxx"
++
++#include <com/sun/star/beans/XPropertySet.hpp>
++#include <com/sun/star/chart/ChartDataRowSource.hpp>
++#include <com/sun/star/chart/XChartDataArray.hpp>
++#include <com/sun/star/chart/XChartDocument.hpp>
++#include <com/sun/star/chart2/XAnyDescriptionAccess.hpp>
++#include <com/sun/star/chart2/XChartDocument.hpp>
++#include <com/sun/star/chart2/XChartTypeContainer.hpp>
++#include <com/sun/star/chart2/XCoordinateSystemContainer.hpp>
++#include <com/sun/star/chart2/XDataSeriesContainer.hpp>
++#include <com/sun/star/chart2/data/XDataSource.hpp>
++#include <com/sun/star/chart2/data/XNumericalDataSequence.hpp>
++#include <com/sun/star/chart2/data/XTextualDataSequence.hpp>
++#include <comphelper/sequence.hxx>
++#include <rtl/math.hxx>
++#include <tools/json_writer.hxx>
++
++#include <algorithm>
++#include <cmath>
++#include <optional>
++
++using namespace ::com::sun::star;
++
++namespace
++{
++/// Categories and series values; empty without data.
++struct ChartData
++{
++    uno::Sequence<OUString> aCategories, aSeries;
++    uno::Sequence<uno::Sequence<double>> aRows;
++};
++
++/// Whether `rText` is all one finite number.
++bool lcl_Number(const OUString& rText)
++{
++    rtl_math_ConversionStatus eStatus = rtl_math_ConversionStatus_Ok;
++    sal_Int32 nEnd = 0;
++    const double fValue = rtl::math::stringToDouble(rText.trim(), '.', 0, &eStatus, &nEnd);
++    return !rText.trim().isEmpty() && eStatus == rtl_math_ConversionStatus_Ok
++           && nEnd == rText.trim().getLength() && std::isfinite(fValue);
++}
++
++/// The "data" member: names and every value.
++std::optional<ChartData> lcl_ParseData(std::u16string_view rJson)
++{
++    const std::optional<boost::json::object> oObject = svx::chartjson::Object(rJson);
++    if (!oObject)
++        return std::nullopt;
++    ChartData aData;
++    const boost::json::value* pData = oObject->if_contains("data");
++    if (!pData)
++        return aData;
++    const boost::json::object* pTable = pData->if_object();
++    const boost::json::value* pCategories = pTable ? pTable->if_contains("categories") : nullptr;
++    const boost::json::value* pSeries = pTable ? pTable->if_contains("series") : nullptr;
++    if (!pCategories || !pCategories->is_array() || !pSeries || !pSeries->is_array())
++        return std::nullopt;
++    std::vector<OUString> aCategories, aNames;
++    for (const boost::json::value& rItem : pCategories->as_array())
++    {
++        if (!rItem.is_string())
++            return std::nullopt;
++        aCategories.push_back(OUString::fromUtf8(
++            std::string_view(rItem.as_string().data(), rItem.as_string().size())));
++    }
++    std::vector<std::vector<double>> aColumns;
++    for (const boost::json::value& rItem : pSeries->as_array())
++    {
++        const boost::json::object* pOne = rItem.if_object();
++        const std::optional<OUString> oName = pOne ? svx::chartjson::Text(*pOne, "name") : std::nullopt;
++        const boost::json::value* pValues = pOne ? pOne->if_contains("values") : nullptr;
++        if (!oName || !pOne->contains("name") || !pValues || !pValues->is_array())
++            return std::nullopt;
++        std::vector<double> aValues;
++        for (const boost::json::value& rValue : pValues->as_array())
++        {
++            // A null is a missing point.
++            if (rValue.is_null())
++                aValues.push_back(std::nan(""));
++            else if (rValue.is_number())
++                aValues.push_back(rValue.to_number<double>());
++            else
++                return std::nullopt;
++        }
++        if (aValues.size() != aCategories.size())
++            return std::nullopt;
++        aNames.push_back(*oName);
++        aColumns.push_back(std::move(aValues));
++    }
++    if (aCategories.empty() || aNames.empty())
++        return std::nullopt;
++    // A scatter's categories are its X values.
++    const boost::json::value* pType = oObject->if_contains("type");
++    if (pType && pType->is_string() && pType->as_string() == "scatter"
++        && !std::all_of(aCategories.begin(), aCategories.end(), lcl_Number))
++        return std::nullopt;
++    aData.aCategories = comphelper::containerToSequence(aCategories);
++    aData.aSeries = comphelper::containerToSequence(aNames);
++    aData.aRows.realloc(aCategories.size());
++    auto pRows = aData.aRows.getArray();
++    for (size_t nRow = 0; nRow < aCategories.size(); ++nRow)
++    {
++        pRows[nRow].realloc(aNames.size());
++        for (size_t nCol = 0; nCol < aNames.size(); ++nCol)
++            pRows[nRow].getArray()[nCol] = aColumns[nCol][nRow];
++    }
++    return aData;
++}
++
++/// Whether series run along the data rows.
++bool lcl_SeriesInRows(const uno::Reference<chart::XChartDocument>& xDoc)
++{
++    uno::Reference<beans::XPropertySet> xProps(xDoc->getDiagram(), uno::UNO_QUERY_THROW);
++    chart::ChartDataRowSource eSource = chart::ChartDataRowSource_COLUMNS;
++    xProps->getPropertyValue(u"DataRowSource"_ustr) >>= eSource;
++    return eSource == chart::ChartDataRowSource_ROWS;
++}
++
++/// Categories, series names, and each series' values.
++struct Table
++{
++    std::vector<OUString> aCategories, aNames;
++    std::vector<std::vector<double>> aColumns;
++};
++
++/// XY series sharing one X list, X as categories.
++std::optional<Table> lcl_XYTable(const uno::Reference<chart::XChartDocument>& xDoc)
++{
++    uno::Reference<chart2::XChartDocument> xModel(xDoc, uno::UNO_QUERY_THROW);
++    uno::Reference<chart2::XCoordinateSystemContainer> xSystems(xModel->getFirstDiagram(),
++                                                                uno::UNO_QUERY_THROW);
++    std::optional<uno::Sequence<double>> oX;
++    Table aTable;
++    for (const auto& xSystem : xSystems->getCoordinateSystems())
++    {
++        uno::Reference<chart2::XChartTypeContainer> xTypes(xSystem, uno::UNO_QUERY_THROW);
++        for (const auto& xType : xTypes->getChartTypes())
++        {
++            uno::Reference<chart2::XDataSeriesContainer> xList(xType, uno::UNO_QUERY_THROW);
++            for (const auto& xSeries : xList->getDataSeries())
++            {
++                uno::Reference<chart2::data::XDataSource> xSource(xSeries, uno::UNO_QUERY_THROW);
++                std::optional<uno::Sequence<double>> oSeriesX, oY;
++                OUString aName;
++                for (const auto& xLabeled : xSource->getDataSequences())
++                {
++                    uno::Reference<beans::XPropertySet> xValues(xLabeled->getValues(), uno::UNO_QUERY_THROW);
++                    OUString aRole;
++                    xValues->getPropertyValue(u"Role"_ustr) >>= aRole;
++                    uno::Reference<chart2::data::XNumericalDataSequence> xNumbers(xValues, uno::UNO_QUERY_THROW);
++                    if (aRole == "values-x")
++                        oSeriesX = xNumbers->getNumericalData();
++                    else if (aRole == "values-y")
++                    {
++                        oY = xNumbers->getNumericalData();
++                        uno::Reference<chart2::data::XTextualDataSequence> xLabel(xLabeled->getLabel(), uno::UNO_QUERY);
++                        for (const OUString& rPart : xLabel.is() ? xLabel->getTextualData() : uno::Sequence<OUString>())
++                            aName += rPart;
++                    }
++                }
++                // Missing or differing X lists are not one table.
++                if (!oSeriesX || !oY || oY->getLength() != oSeriesX->getLength()
++                    || (oX && !std::equal(oX->begin(), oX->end(), oSeriesX->begin(), oSeriesX->end())))
++                    return std::nullopt;
++                oX = oSeriesX;
++                aTable.aNames.push_back(aName);
++                aTable.aColumns.emplace_back(oY->begin(), oY->end());
++            }
++        }
++    }
++    if (!oX || !oX->hasElements()
++        || std::any_of(oX->begin(), oX->end(), [](double f) { return !std::isfinite(f); }))
++        return std::nullopt;
++    for (double fX : *oX)
++        aTable.aCategories.push_back(OUString::number(fX));
++    return aTable;
++}
++}
++
++bool ChartHelper::IsChartData(std::u16string_view rJson) { return lcl_ParseData(rJson).has_value(); }
++
++bool ChartHelper::SetChartData(const uno::Reference<uno::XInterface>& xChart,
++                               std::u16string_view rJson)
++{
++    const std::optional<ChartData> oData = lcl_ParseData(rJson);
++    uno::Reference<chart::XChartDocument> xDoc(xChart, uno::UNO_QUERY);
++    if (!oData || !xDoc.is())
++        return false;
++    if (!oData->aRows.hasElements())
++        return true;
++    const bool bXY = xDoc->getDiagram()->getDiagramType() == u"com.sun.star.chart.XYDiagram";
++    if (bXY && !std::all_of(oData->aCategories.begin(), oData->aCategories.end(), lcl_Number))
++        return false;
++    // Series down the columns, as a new chart has them.
++    uno::Reference<beans::XPropertySet> xProps(xDoc->getDiagram(), uno::UNO_QUERY_THROW);
++    xProps->setPropertyValue(u"DataRowSource"_ustr, uno::Any(chart::ChartDataRowSource_COLUMNS));
++    uno::Reference<chart::XChartDataArray> xArray(xDoc->getData(), uno::UNO_QUERY_THROW);
++    uno::Sequence<uno::Sequence<double>> aRows = oData->aRows;
++    for (auto& rRow : asNonConstRange(aRows))
++        for (double& rValue : asNonConstRange(rRow))
++            if (std::isnan(rValue))
++                rValue = xArray->getNotANumber();
++    xArray->setData(aRows);
++    xArray->setRowDescriptions(oData->aCategories);
++    xArray->setColumnDescriptions(oData->aSeries);
++    if (bXY)
++    {
++        // X values go in as numbers, not text.
++        uno::Sequence<uno::Sequence<uno::Any>> aX(oData->aCategories.getLength());
++        auto pX = aX.getArray();
++        for (sal_Int32 n = 0; n < aX.getLength(); ++n)
++            pX[n] = { uno::Any(oData->aCategories[n].trim().toDouble()) };
++        uno::Reference<chart2::XAnyDescriptionAccess> xAny(xArray, uno::UNO_QUERY_THROW);
++        xAny->setAnyRowDescriptions(aX);
++    }
++    return true;
++}
++
++void ChartHelper::WriteChartData(::tools::JsonWriter& rJson,
++                                 const uno::Reference<uno::XInterface>& xChart)
++{
++    uno::Reference<chart::XChartDocument> xDoc(xChart, uno::UNO_QUERY_THROW);
++    uno::Reference<chart::XChartDataArray> xArray(xDoc->getData(), uno::UNO_QUERY_THROW);
++    const bool bRows = lcl_SeriesInRows(xDoc);
++    const uno::Sequence<uno::Sequence<double>> aRows = xArray->getData();
++    const uno::Sequence<OUString> aCategories
++        = bRows ? xArray->getColumnDescriptions() : xArray->getRowDescriptions();
++    const uno::Sequence<OUString> aNames
++        = bRows ? xArray->getRowDescriptions() : xArray->getColumnDescriptions();
++    const sal_Int32 nOuter = bRows ? aNames.getLength() : aCategories.getLength();
++    const sal_Int32 nInner = bRows ? aCategories.getLength() : aNames.getLength();
++    const bool bTable = nOuter > 0 && nInner > 0 && aRows.getLength() == nOuter
++                        && std::all_of(aRows.begin(), aRows.end(),
++                                       [nInner](const auto& rRow) { return rRow.getLength() == nInner; });
++    Table aTable;
++    if (bTable)
++    {
++        aTable.aCategories.assign(aCategories.begin(), aCategories.end());
++        aTable.aNames.assign(aNames.begin(), aNames.end());
++        for (sal_Int32 nSeries = 0; nSeries < aNames.getLength(); ++nSeries)
++        {
++            std::vector<double>& rColumn = aTable.aColumns.emplace_back();
++            for (sal_Int32 nCategory = 0; nCategory < aCategories.getLength(); ++nCategory)
++            {
++                const double fValue = bRows ? aRows[nSeries][nCategory] : aRows[nCategory][nSeries];
++                rColumn.push_back(xArray->isNotANumber(fValue) ? std::nan("") : fValue);
++            }
++        }
++    }
++    else if (xDoc->getDiagram()->getDiagramType() == u"com.sun.star.chart.XYDiagram")
++    {
++        std::optional<Table> oXY = lcl_XYTable(xDoc);
++        if (!oXY)
++            return;
++        aTable = std::move(*oXY);
++    }
++    else
++        return;
++    auto aData = rJson.startNode("data");
++    {
++        auto aList = rJson.startArray("categories");
++        for (const OUString& rName : aTable.aCategories)
++            rJson.putSimpleValue(rName);
++    }
++    auto aList = rJson.startArray("series");
++    for (size_t nSeries = 0; nSeries < aTable.aNames.size(); ++nSeries)
++    {
++        auto aOne = rJson.startStruct();
++        rJson.put("name", aTable.aNames[nSeries]);
++        auto aValues = rJson.startArray("values");
++        for (double fValue : aTable.aColumns[nSeries])
++            rJson.putRaw(std::isfinite(fValue) ? OString::number(fValue) : "null"_ostr);
++    }
++}
++
++/* vim:set shiftwidth=4 softtabstop=4 expandtab: */

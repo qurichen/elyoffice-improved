@@ -1,0 +1,387 @@
+diff --git a/sc/source/ui/unoobj/docuno.cxx b/sc/source/ui/unoobj/docuno.cxx
+index 0bd1bb34e..50582b5e4 100644
+--- a/sc/source/ui/unoobj/docuno.cxx
++++ b/sc/source/ui/unoobj/docuno.cxx
+@@ -97,6 +97,17 @@
+ #include <o3tl/string_view.hxx>
+ #include <formulacell.hxx>
+ #include <rangenam.hxx>
++#include <com/sun/star/sheet/TableValidationVisibility.hpp>
++#include <svl/zformat.hxx>
++#include <svl/numformat.hxx>
++#include <typedstrdata.hxx>
++#include <filterentries.hxx>
++#include <queryentry.hxx>
++#include <queryparam.hxx>
++#include <dbdata.hxx>
++#include <unordered_set>
++#include <conditio.hxx>
++#include <validat.hxx>
+ #include <tokenarray.hxx>
+ #include <convuno.hxx>
+ #include <datauno.hxx>
+@@ -736,16 +747,209 @@ void lcl_DefinedNames(tools::JsonWriter& rJsonWriter, ScDocument& rDoc)
+ }
+ }
+ 
++
++namespace
++{
++/// The cell a `?col=&row=` query names, on the shown sheet.
++bool lcl_QueryCell(std::string_view rCommand, SCCOL& rCol, SCROW& rRow)
++{
++    std::map<OUString, OUString> aMap
++        = SfxLokHelper::parseCommandParameters(OUString::fromUtf8(rCommand));
++    if (!aMap.count(u"col"_ustr) || !aMap.count(u"row"_ustr))
++        return false;
++    rCol = aMap[u"col"_ustr].toInt32();
++    rRow = aMap[u"row"_ustr].toInt32();
++    return true;
++}
++
++/// A filter column's entries, as the kernel menu lists them.
++void lcl_FilterValues(tools::JsonWriter& rJson, ScDocument& rDoc, SCCOL nCol, SCROW nRow, SCTAB nTab)
++{
++    ScFilterEntries aEntries;
++    rDoc.GetFilterEntries(nCol, nRow, nTab, aEntries);
++    std::unordered_set<OUString> aStrings;
++    std::unordered_set<double> aNumbers;
++    bool bNonEmpty = false;
++    bool bFiltered = false;
++    if (const ScDBData* pDBData = rDoc.GetDBAtCursor(nCol, nRow, nTab, ScDBDataPortion::AREA))
++    {
++        ScQueryParam aParam;
++        pDBData->GetQueryParam(aParam);
++        const std::vector<ScQueryEntry*> aFound = aParam.FindAllEntriesByField(nCol);
++        bFiltered = !aFound.empty();
++        bNonEmpty = aFound.size() == 1 && aFound[0]->IsQueryByNonEmpty();
++        for (const ScQueryEntry* pEntry : aFound)
++        {
++            if (bNonEmpty || pEntry->eOp != SC_EQUAL)
++                continue;
++            for (const ScQueryEntry::Item& rItem : pEntry->GetQueryItems())
++            {
++                if (rItem.meType == ScQueryEntry::ByValue)
++                    aNumbers.insert(rItem.mfVal);
++                else
++                    aStrings.insert(rItem.maString.getString());
++            }
++        }
++    }
++    rJson.put("filtered", bFiltered);
++    auto aValues = rJson.startArray("values");
++    for (const ScTypedStrData& rStr : aEntries)
++    {
++        // The rules of ScGridWindow::LaunchAutoFilterMenu.
++        bool bSelected = !rStr.IsHiddenByFilter();
++        if (!aStrings.empty() || !aNumbers.empty())
++            bSelected = aStrings.count(rStr.GetString())
++                        || (rStr.GetStringType() == ScTypedStrData::Value
++                            && (aNumbers.count(rStr.GetValue())
++                                || aNumbers.count(rStr.GetRoundedValue())));
++        else if (bNonEmpty && rStr.GetString().isEmpty())
++            bSelected = false;
++        auto aValue = rJson.startStruct();
++        rJson.put("text", rStr.GetString());
++        rJson.put("hidden", rStr.IsHiddenByFilter());
++        rJson.put("selected", bSelected);
++    }
++}
++
++/// The current cell's validation, as the kit client sets it.
++void lcl_Validation(tools::JsonWriter& rJson, ScDocument& rDoc, const ScAddress& rPos)
++{
++    static const char* const aModes[] = { "any",  "whole", "decimal",    "date",
++                                          "time", "textlength", "list", "custom" };
++    static const std::pair<ScConditionMode, const char*> aOperators[]
++        = { { ScConditionMode::Equal, "equal" },          { ScConditionMode::NotEqual, "notequal" },
++            { ScConditionMode::Less, "less" },            { ScConditionMode::EqLess, "lessequal" },
++            { ScConditionMode::Greater, "greater" },      { ScConditionMode::EqGreater, "greaterequal" },
++            { ScConditionMode::Between, "between" },      { ScConditionMode::NotBetween, "notbetween" } };
++    const sal_uInt32 nIndex = rDoc.GetAttr(rPos, ATTR_VALIDDATA).GetValue();
++    const ScValidationData* pData = nIndex ? rDoc.GetValidationEntry(nIndex) : nullptr;
++    rJson.put("type", pData ? aModes[pData->GetDataMode()] : "any");
++    if (!pData)
++        return;
++    const auto pOperator = std::find_if(std::begin(aOperators), std::end(aOperators),
++                                        [pData](const auto& rPair) { return rPair.first == pData->GetOperation(); });
++    rJson.put("operator", pOperator != std::end(aOperators) ? pOperator->second : "equal");
++    rJson.put("value1", pData->GetExpression(rPos, 0));
++    rJson.put("value2", pData->GetExpression(rPos, 1));
++    rJson.put("dropdown", pData->GetListType() != css::sheet::TableValidationVisibility::INVISIBLE);
++    rJson.put("ignoreBlank", pData->IsIgnoreBlank());
++    OUString aTitle, aMessage;
++    rJson.put("showInput", pData->GetInput(aTitle, aMessage));
++    rJson.put("inputTitle", aTitle);
++    rJson.put("inputMessage", aMessage);
++    ScValidErrorStyle eStyle = SC_VALERR_STOP;
++    rJson.put("showError", pData->GetErrMsg(aTitle, aMessage, eStyle));
++    rJson.put("errorTitle", aTitle);
++    rJson.put("errorMessage", aMessage);
++    rJson.put("errorStyle", eStyle == SC_VALERR_INFO      ? "info"
++                            : eStyle == SC_VALERR_WARNING ? "warning"
++                                                          : "stop");
++}
++
++/// The current cell's number format code and kind.
++void lcl_NumberFormat(tools::JsonWriter& rJson, ScDocument& rDoc, const ScAddress& rPos,
++                      std::string_view rCommand)
++{
++    SvNumberFormatter* pFormatter = rDoc.GetFormatTable();
++    std::map<OUString, OUString> aMap
++        = SfxLokHelper::parseCommandParameters(OUString::fromUtf8(rCommand));
++    if (aMap.count(u"code"_ustr))
++    {
++        bool bThousand, bRed;
++        sal_uInt16 nPrecision, nLeading;
++        rJson.put("valid", pFormatter->GetFormatSpecialInfo(aMap[u"code"_ustr], bThousand, bRed,
++                                                            nPrecision, nLeading) == 0);
++        return;
++    }
++    const sal_uInt32 nIndex = rDoc.GetNumberFormat(rPos.Col(), rPos.Row(), rPos.Tab());
++    const SvNumberformat* pEntry = pFormatter->GetEntry(nIndex);
++    rJson.put("code", pEntry ? pEntry->GetFormatstring() : OUString());
++    static const std::pair<SvNumFormatType, const char*> aTypes[]
++        = { { SvNumFormatType::NUMBER, "number" },     { SvNumFormatType::CURRENCY, "currency" },
++            { SvNumFormatType::PERCENT, "percent" },   { SvNumFormatType::DATE, "date" },
++            { SvNumFormatType::TIME, "time" },         { SvNumFormatType::DATETIME, "datetime" },
++            { SvNumFormatType::SCIENTIFIC, "scientific" }, { SvNumFormatType::FRACTION, "fraction" },
++            { SvNumFormatType::LOGICAL, "boolean" },   { SvNumFormatType::TEXT, "text" } };
++    const SvNumFormatType eType = pEntry ? pEntry->GetMaskedType() : SvNumFormatType::ALL;
++    const auto pType = std::find_if(std::begin(aTypes), std::end(aTypes),
++                                    [eType](const auto& rPair) { return rPair.first == eType; });
++    // General opens each locale's block and reads as a number.
++    const bool bGeneral = !pEntry || nIndex % SV_COUNTRY_LANGUAGE_OFFSET == 0;
++    rJson.put("type", bGeneral ? "general" : pType != std::end(aTypes) ? pType->second : "general");
++}
++
++/// The shown sheet's conditional formats.
++void lcl_ConditionalFormats(tools::JsonWriter& rJson, ScDocument& rDoc, SCTAB nTab)
++{
++    auto aFormats = rJson.startArray("formats");
++    const ScConditionalFormatList* pList = rDoc.GetCondFormList(nTab);
++    if (!pList)
++        return;
++    const ScAddress::Details aDetails(rDoc.GetAddressConvention(), 0, 0);
++    for (const auto& pFormat : *pList)
++    {
++        auto aFormat = rJson.startStruct();
++        rJson.put("key", static_cast<sal_Int64>(pFormat->GetKey()));
++        OUString aRange;
++        pFormat->GetRange().Format(aRange, ScRefFlags::VALID, rDoc, aDetails.eConv);
++        rJson.put("range", aRange);
++        const ScFormatEntry* pEntry = pFormat->size() ? pFormat->GetEntry(0) : nullptr;
++        const ScFormatEntry::Type eType = pEntry ? pEntry->GetType() : ScFormatEntry::Type::Date;
++        rJson.put("kind", eType == ScFormatEntry::Type::Colorscale ? "scale"
++                          : eType == ScFormatEntry::Type::Databar  ? "databar"
++                          : eType == ScFormatEntry::Type::Iconset  ? "iconset"
++                          : eType == ScFormatEntry::Type::Condition || eType == ScFormatEntry::Type::ExtCondition
++                              ? "cell"
++                              : "other");
++        if (eType == ScFormatEntry::Type::Condition || eType == ScFormatEntry::Type::ExtCondition)
++        {
++            const auto* pCondition = static_cast<const ScCondFormatEntry*>(pEntry);
++            rJson.put("style", pCondition->GetStyle());
++            rJson.put("value1", pCondition->GetExpression(pFormat->GetRange().GetTopLeftCorner(), 0));
++        }
++    }
++}
++}
++
+ bool ScModelObj::supportsCommand(std::u16string_view rCommand)
+ {
+-    return rCommand == u"SheetReferences" || rCommand == u"DefinedNames"
+-           || rCommand == u"SelectedRange";
++    static constexpr std::u16string_view aCommands[]
++        = { u"SheetReferences",  u"DefinedNames",       u"SelectedRange",
++            u"AutoFilterValues", u"DataSelectValues",   u"Validation",
++            u"NumberFormatCode", u"ConditionalFormats" };
++    return std::find(std::begin(aCommands), std::end(aCommands), rCommand) != std::end(aCommands);
+ }
+ 
+ void ScModelObj::getCommandValues(tools::JsonWriter& rJsonWriter, std::string_view rCommand)
+ {
+     if (pDocShell && rCommand == ".uno:DefinedNames")
+         return lcl_DefinedNames(rJsonWriter, pDocShell->GetDocument());
++    ScViewData* pCurrent = ScDocShell::GetViewData();
++    if (pDocShell && pCurrent)
++    {
++        ScDocument& rDoc = pDocShell->GetDocument();
++        const SCTAB nTab = pCurrent->CurrentTabForData();
++        const ScAddress aCursor(pCurrent->GetCurX(), pCurrent->GetCurY(), nTab);
++        SCCOL nCol = 0;
++        SCROW nRow = 0;
++        if (o3tl::starts_with(rCommand, ".uno:AutoFilterValues?") && lcl_QueryCell(rCommand, nCol, nRow))
++            return lcl_FilterValues(rJsonWriter, rDoc, nCol, nRow, nTab);
++        if (o3tl::starts_with(rCommand, ".uno:DataSelectValues?") && lcl_QueryCell(rCommand, nCol, nRow))
++        {
++            std::vector<ScTypedStrData> aStrings;
++            rDoc.GetDataEntries(nCol, nRow, nTab, aStrings, true);
++            auto aValues = rJsonWriter.startArray("values");
++            for (const ScTypedStrData& rStr : aStrings)
++                rJsonWriter.putSimpleValue(rStr.GetString());
++            return;
++        }
++        if (rCommand == ".uno:Validation")
++            return lcl_Validation(rJsonWriter, rDoc, aCursor);
++        if (o3tl::starts_with(rCommand, ".uno:NumberFormatCode"))
++            return lcl_NumberFormat(rJsonWriter, rDoc, aCursor, rCommand);
++        if (rCommand == ".uno:ConditionalFormats")
++            return lcl_ConditionalFormats(rJsonWriter, rDoc, nTab);
++    }
+     if (pDocShell && rCommand == ".uno:SelectedRange")
+     {
+         // The one selected range, absolute; empty for several.
+@@ -760,6 +964,27 @@ void ScModelObj::getCommandValues(tools::JsonWriter& rJsonWriter, std::string_vi
+                           : aRange.Format(rDoc, ScRefFlags::RANGE_ABS_3D, aDetails);
+         rJsonWriter.put("commandName", ".uno:SelectedRange");
+         rJsonWriter.put("range", aTarget);
++        if (aTarget.isEmpty())
++            return;
++        // The data inside it: its corners, first row, header guess.
++        SCCOL nCol1 = aRange.aStart.Col(), nCol2 = aRange.aEnd.Col();
++        SCROW nRow1 = aRange.aStart.Row(), nRow2 = aRange.aEnd.Row();
++        const SCTAB nTab = aRange.aStart.Tab();
++        if (!rDoc.ShrinkToDataArea(nTab, nCol1, nRow1, nCol2, nRow2))
++            return;
++        {
++            auto aArea = rJsonWriter.startArray("area");
++            rJsonWriter.putSimpleValue(OUString::number(nCol1));
++            rJsonWriter.putSimpleValue(OUString::number(nRow1));
++            rJsonWriter.putSimpleValue(OUString::number(nCol2));
++            rJsonWriter.putSimpleValue(OUString::number(nRow2));
++        }
++        {
++            auto aTop = rJsonWriter.startArray("top");
++            for (SCCOL nCol = nCol1; nCol <= nCol2; ++nCol)
++                rJsonWriter.putSimpleValue(rDoc.GetString(nCol, nRow1, nTab));
++        }
++        rJsonWriter.put("header", rDoc.HasColHeader(nCol1, nRow1, nCol2, nRow2, nTab));
+         return;
+     }
+     if (pDocShell && o3tl::starts_with(rCommand, ".uno:DefinedNames?"))
+diff --git a/sc/source/ui/view/gridwin.cxx b/sc/source/ui/view/gridwin.cxx
+index 401a26b18..7aa4b4ec7 100644
+--- a/sc/source/ui/view/gridwin.cxx
++++ b/sc/source/ui/view/gridwin.cxx
+@@ -956,8 +956,25 @@ void ScGridWindow::SendAutofilterPopupPosition(SCCOL nCol, SCROW nRow) {
+     }
+ }
+ 
++namespace
++{
++/// Asks the kit client for its menu at a cell.
++void lcl_AskClientMenu(const ScViewData& rViewData, const char* pType, SCCOL nCol, SCROW nRow)
++{
++    tools::JsonWriter aJson;
++    aJson.put("type", pType);
++    aJson.put("col", static_cast<sal_Int64>(nCol));
++    aJson.put("row", static_cast<sal_Int64>(nRow));
++    rViewData.GetViewShell()->libreOfficeKitViewCallback(LOK_CALLBACK_TOOLTIP,
++                                                         aJson.finishAndGetAsOString());
++}
++}
++
+ void ScGridWindow::LaunchAutoFilterMenu(SCCOL nCol, SCROW nRow)
+ {
++    // The kit client draws its own filter menu.
++    if (comphelper::LibreOfficeKit::isActive())
++        return lcl_AskClientMenu(mrViewData, "autofilter", nCol, nRow);
+     SCTAB nTab = mrViewData.CurrentTabForData();
+     ScDocument& rDoc = mrViewData.GetDocument();
+     bool bLOKActive = comphelper::LibreOfficeKit::isActive();
+@@ -1512,6 +1529,9 @@ void ScGridWindow::DoScenarioMenu( const ScRange& rScenRange )
+ 
+ void ScGridWindow::LaunchDataSelectMenu(const SCCOL nCol, const SCROW nRow)
+ {
++    // The kit client draws its own list.
++    if (comphelper::LibreOfficeKit::isActive())
++        return lcl_AskClientMenu(mrViewData, "datalist", nCol, nRow);
+     mpFilterBox.reset();
+ 
+     ScDocument& rDoc = mrViewData.GetDocument();
+diff --git a/sc/source/core/data/validat.cxx b/sc/source/core/data/validat.cxx
+index 7850c0e52..8c7dde103 100644
+--- a/sc/source/core/data/validat.cxx
++++ b/sc/source/core/data/validat.cxx
+@@ -24,6 +24,9 @@
+ 
+ #include <sfx2/app.hxx>
+ #include <sfx2/viewsh.hxx>
++#include <LibreOfficeKit/LibreOfficeKitEnums.h>
++#include <tools/json_writer.hxx>
++#include <comphelper/lok.hxx>
+ #include <basic/sbmeth.hxx>
+ #include <basic/sbmod.hxx>
+ #include <basic/sbstar.hxx>
+@@ -396,6 +399,25 @@ void ScValidationData::DoError(weld::Window* pParent, const OUString& rInput, co
+     if (aMessage.isEmpty())
+         aMessage = ScResId( STR_VALID_DEFERROR );
+ 
++    if (comphelper::LibreOfficeKit::isActive())
++    {
++        // No dialog: the default answer, and the client tells.
++        const bool bForget = eErrorStyle != SC_VALERR_INFO;
++        tools::JsonWriter aJson;
++        aJson.put("type", "validityerror");
++        aJson.put("title", aTitle);
++        aJson.put("message", aMessage);
++        aJson.put("style", eErrorStyle == SC_VALERR_INFO      ? "info"
++                           : eErrorStyle == SC_VALERR_WARNING ? "warning"
++                                                              : "stop");
++        aJson.put("accepted", !bForget);
++        if (SfxViewShell* pViewShell = SfxViewShell::Current())
++            pViewShell->libreOfficeKitViewCallback(LOK_CALLBACK_TOOLTIP,
++                                                   aJson.finishAndGetAsOString());
++        callback(bForget);
++        return;
++    }
++
+     VclButtonsType eStyle = VclButtonsType::Ok;
+     VclMessageType eType = VclMessageType::Error;
+     switch (eErrorStyle)
+diff --git a/sc/source/ui/view/viewfun2.cxx b/sc/source/ui/view/viewfun2.cxx
+index 83bb29d05..e98b7c6f9 100644
+--- a/sc/source/ui/view/viewfun2.cxx
++++ b/sc/source/ui/view/viewfun2.cxx
+@@ -2049,6 +2049,8 @@ bool ScViewFunc::SearchAndReplace( const SvxSearchItem* pSearchItem,
+         bFirst = false;
+ 
+     bool bFound = false;
++    // Find-all's cells, one rectangle each for the kit client.
++    ScRangeList aFoundAll;
+     while (true)
+     {
+         GetFrameWin()->EnterWait();
+@@ -2065,6 +2067,8 @@ bool ScViewFunc::SearchAndReplace( const SvxSearchItem* pSearchItem,
+                                         aUndoStr, std::move(pUndoDoc), pSearchItem ) );
+             }
+ 
++            if (nCommand == SvxSearchCmd::FIND_ALL)
++                aFoundAll = aMatchedRanges;
+             if (nCommand == SvxSearchCmd::FIND_ALL || nCommand == SvxSearchCmd::REPLACE_ALL)
+             {
+                 SfxViewFrame* pViewFrm = SfxViewFrame::Current();
+@@ -2199,7 +2203,21 @@ bool ScViewFunc::SearchAndReplace( const SvxSearchItem* pSearchItem,
+             if (pGridWindow)
+             {
+                 std::vector<tools::Rectangle> aLogicRects;
+-                pGridWindow->GetCellSelection(aLogicRects);
++                if (nCommand == SvxSearchCmd::FIND_ALL)
++                {
++                    // The marks join neighbors; the client counts cells.
++                    for (size_t i = 0; i < aFoundAll.size(); ++i)
++                    {
++                        const ScRange& rRange = aFoundAll[i];
++                        for (SCROW nY = rRange.aStart.Row(); nY <= rRange.aEnd.Row(); ++nY)
++                            for (SCCOL nX = rRange.aStart.Col(); nX <= rRange.aEnd.Col(); ++nX)
++                                aLogicRects.emplace_back(
++                                    GetViewData().GetPrintTwipsPos(nX, nY),
++                                    Size(rDoc.GetColWidth(nX, nTab), rDoc.GetRowHeight(nY, nTab)));
++                    }
++                }
++                else
++                    pGridWindow->GetCellSelection(aLogicRects);
+ 
+                 boost::property_tree::ptree aTree;
+                 aTree.put("searchString", pSearchItem->GetSearchString().toUtf8().getStr());

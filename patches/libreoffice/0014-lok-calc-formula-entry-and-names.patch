@@ -1,0 +1,336 @@
+--- a/sc/sdi/scalc.sdi
++++ b/sc/sdi/scalc.sdi
+@@ -1286,7 +1286,7 @@
+ 
+ 
+ SfxVoidItem DefineName FID_DEFINE_NAME
+-(SfxStringItem Name FID_DEFINE_NAME,SfxStringItem Symbol FN_PARAM_1,SfxStringItem Options FN_PARAM_2)
++(SfxStringItem Name FID_DEFINE_NAME,SfxStringItem Symbol FN_PARAM_1,SfxStringItem Options FN_PARAM_2,SfxStringItem Scope FN_PARAM_3)
+ [
+     AutoUpdate = FALSE,
+     FastCall = FALSE,
+--- a/sc/source/filter/excel/excdoc.cxx
++++ b/sc/source/filter/excel/excdoc.cxx
+@@ -82,11 +82,12 @@
+     ScDocument& rDoc = self.GetDoc();
+ 
+     aRecList.AppendNewRecord( new XclExpXmlStartSingleElementRecord( XML_calcPr ) );
+-    // OOXTODO: calcCompleted, calcId, calcMode, calcOnSave,
++    // OOXTODO: calcCompleted, calcId, calcOnSave,
+     //          concurrentCalc, concurrentManualCount,
+     //          forceFullCalc, fullCalcOnLoad, fullPrecision
+     aRecList.AppendNewRecord( new XclCalccount( rDoc ) );
+     aRecList.AppendNewRecord( new XclRefmode( rDoc ) );
++    aRecList.AppendNewRecord( new XclCalcMode( rDoc ) );
+     aRecList.AppendNewRecord( new XclIteration( rDoc ) );
+     aRecList.AppendNewRecord( new XclDelta( rDoc ) );
+     aRecList.AppendNewRecord( new XclExpBoolRecord(oox::xls::BIFF_ID_SAVERECALC, true) );
+--- a/sc/source/filter/excel/excimp8.cxx
++++ b/sc/source/filter/excel/excimp8.cxx
+@@ -163,6 +163,12 @@
+     ScDocOptions    aOpt = rD.GetDocOptions();
+     aOpt.SetIterCount( aIn.ReaduInt16() );
+     rD.SetDocOptions( aOpt );
++}
++
++void ImportExcel8::Calcmode()
++{
++    // 0 manual; 1, or -1 (all but tables), automatic.
++    rD.SetAutoCalc( aIn.ReaduInt16() != 0 );
+ }
+ 
+ void ImportExcel8::Precision()
+--- a/sc/source/filter/excel/read.cxx
++++ b/sc/source/filter/excel/read.cxx
+@@ -1184,6 +1184,7 @@
+                     case EXC_ID4_FORMULA:       Formula25();            break;
+                     case EXC_ID_SHRFMLA:        Shrfmla();              break;
+                     case 0x000C:    Calccount();            break;  // CALCCOUNT
++                    case 0x000D:    Calcmode();             break;  // CALCMODE
+                     case 0x0010:    Delta();                break;  // DELTA
+                     case 0x0011:    Iteration();            break;  // ITERATION
+                     case 0x007E:
+--- a/sc/source/filter/inc/excimp8.hxx
++++ b/sc/source/filter/inc/excimp8.hxx
+@@ -36,6 +36,7 @@
+     virtual ErrCode         Read() override;
+ 
+     void                    Calccount();              // 0x0C
++    void                    Calcmode();               // 0x0D
+     void                    Precision();              // 0x0E
+     void                    Delta();                  // 0x10
+     void                    Iteration();              // 0x11
+--- a/sc/source/filter/inc/xcl97rec.hxx
++++ b/sc/source/filter/inc/xcl97rec.hxx
+@@ -506,6 +506,15 @@
+     virtual void                SaveXml( XclExpXmlStream& rStrm ) override;
+ };
+ 
++/// Automatic or manual calculation.
++class XclCalcMode : public XclExpBoolRecord
++{
++public:
++                                XclCalcMode( const ScDocument& );
++
++    virtual void                SaveXml( XclExpXmlStream& rStrm ) override;
++};
++
+ class XclExpFileEncryption : public XclExpRecord
+ {
+ public:
+--- a/sc/source/filter/xcl97/xcl97rec.cxx
++++ b/sc/source/filter/xcl97/xcl97rec.cxx
+@@ -2045,6 +2045,16 @@
+ void XclRefmode::SaveXml( XclExpXmlStream& rStrm )
+ {
+     rStrm.WriteAttributes(XML_refMode, GetBool() ? "A1" : "R1C1");
++}
++
++XclCalcMode::XclCalcMode( const ScDocument& rDoc ) :
++    XclExpBoolRecord( 0x000D, rDoc.GetAutoCalc() )
++{
++}
++
++void XclCalcMode::SaveXml( XclExpXmlStream& rStrm )
++{
++    rStrm.WriteAttributes(XML_calcMode, GetBool() ? "auto" : "manual");
+ }
+ 
+ /* vim:set shiftwidth=4 softtabstop=4 expandtab: */
+--- a/sc/source/ui/app/inputhdl.cxx
++++ b/sc/source/ui/app/inputhdl.cxx
+@@ -1767,7 +1767,7 @@
+     HideTip();
+ 
+     EditView* pActiveView = pTopView ? pTopView : pTableView;
+-    if (comphelper::LibreOfficeKit::isActive() && pTopView && pInputWin)
++    if (comphelper::LibreOfficeKit::isActive() && pTopView && pInputWin && eMode == SC_INPUT_TOP)
+         pInputWin->TextGrabFocus();
+     if (pActiveView)
+         pActiveView->ShowCursor();
+@@ -1776,7 +1776,7 @@
+ void ScInputHandler::LOKPasteFunctionData(const OUString& rFunctionName)
+ {
+     // in case we have no top view try to create it
+-    if (!pTopView && pInputWin)
++    if (!pTopView && pInputWin && eMode == SC_INPUT_NONE)
+     {
+         ScInputMode eCurMode = eMode;
+         SetMode(SC_INPUT_TOP);
+@@ -3527,6 +3527,10 @@
+ 
+     HideTip();
+     HideTipBelow();
++
++    // As CancelHandler: the entered formula's marks go.
++    if (comphelper::LibreOfficeKit::isActive() && pActiveViewSh)
++        ScInputHandler::SendReferenceMarks(pActiveViewSh, std::vector<ReferenceMark>());
+ 
+     nFormSelStart = nFormSelEnd = 0;
+     aFormText.clear();
+--- a/sc/source/ui/unoobj/docuno.cxx
++++ b/sc/source/ui/unoobj/docuno.cxx
+@@ -678,18 +678,104 @@
+     formula::FormulaTokenArrayPlainIterator aIter(rCode);
+     for (const formula::FormulaToken* pToken = aIter.First(); pToken; pToken = aIter.Next())
+         if (pToken->GetOpCode() == ocIndirect)
++            return true;
++    return false;
++}
++
++/// Whether rCode lost a reference or holds an error.
++bool lcl_IsBroken(const ScTokenArray& rCode)
++{
++    formula::FormulaTokenArrayPlainIterator aIter(rCode);
++    for (const formula::FormulaToken* pToken = aIter.First(); pToken; pToken = aIter.Next())
++    {
++        if (pToken->GetType() == formula::svError || pToken->GetOpCode() == ocBad)
++            return true;
++        if (pToken->GetType() == formula::svSingleRef && pToken->GetSingleRef()->IsDeleted())
+             return true;
++        if (pToken->GetType() == formula::svDoubleRef
++            && (pToken->GetDoubleRef()->Ref1.IsDeleted() || pToken->GetDoubleRef()->Ref2.IsDeleted()))
++            return true;
++    }
+     return false;
++}
++
++/// Every named range: name, scope, formula, and whether it broke.
++void lcl_DefinedNames(tools::JsonWriter& rJsonWriter, ScDocument& rDoc)
++{
++    rJsonWriter.put("commandName", ".uno:DefinedNames");
++    auto aNames = rJsonWriter.startArray("names");
++    auto aPut = [&rJsonWriter, &rDoc](const ScRangeName* pNames, const OUString& rScope) {
++        if (!pNames)
++            return;
++        for (const auto& [rKey, pData] : *pNames)
++        {
++            auto aName = rJsonWriter.startStruct();
++            rJsonWriter.put("name", pData->GetName());
++            rJsonWriter.put("scope", rScope);
++            rJsonWriter.put("formula", pData->GetSymbol(rDoc.GetGrammar()));
++            // The absolute range it names, if it is one.
++            ScRange aRange;
++            OUString aTarget;
++            const ScAddress::Details aDetails(rDoc.GetAddressConvention(), 0, 0);
++            if (pData->IsValidReference(aRange))
++                aTarget = aRange.aStart == aRange.aEnd
++                              ? aRange.aStart.Format(ScRefFlags::ADDR_ABS_3D, &rDoc, aDetails)
++                              : aRange.Format(rDoc, ScRefFlags::RANGE_ABS_3D, aDetails);
++            rJsonWriter.put("range", aTarget);
++            rJsonWriter.put("broken", pData->GetErrCode() != FormulaError::NONE
++                                          || (pData->GetCode() && lcl_IsBroken(*pData->GetCode())));
++        }
++    };
++    aPut(rDoc.GetRangeName(), OUString());
++    for (SCTAB nTab = 0; nTab < rDoc.GetTableCount(); ++nTab)
++    {
++        OUString aSheet;
++        rDoc.GetName(nTab, aSheet);
++        aPut(rDoc.GetRangeName(nTab), aSheet);
++    }
+ }
+ }
+ 
+ bool ScModelObj::supportsCommand(std::u16string_view rCommand)
+ {
+-    return rCommand == u"SheetReferences";
++    return rCommand == u"SheetReferences" || rCommand == u"DefinedNames"
++           || rCommand == u"SelectedRange";
+ }
+ 
+ void ScModelObj::getCommandValues(tools::JsonWriter& rJsonWriter, std::string_view rCommand)
+ {
++    if (pDocShell && rCommand == ".uno:DefinedNames")
++        return lcl_DefinedNames(rJsonWriter, pDocShell->GetDocument());
++    if (pDocShell && rCommand == ".uno:SelectedRange")
++    {
++        // The one selected range, absolute; empty for several.
++        ScViewData* pViewData = ScDocShell::GetViewData();
++        ScRange aRange;
++        OUString aTarget;
++        ScDocument& rDoc = pDocShell->GetDocument();
++        const ScAddress::Details aDetails(rDoc.GetAddressConvention(), 0, 0);
++        if (pViewData && pViewData->GetSimpleArea(aRange) == SC_MARK_SIMPLE)
++            aTarget = aRange.aStart == aRange.aEnd
++                          ? aRange.aStart.Format(ScRefFlags::ADDR_ABS_3D, &rDoc, aDetails)
++                          : aRange.Format(rDoc, ScRefFlags::RANGE_ABS_3D, aDetails);
++        rJsonWriter.put("commandName", ".uno:SelectedRange");
++        rJsonWriter.put("range", aTarget);
++        return;
++    }
++    if (pDocShell && o3tl::starts_with(rCommand, ".uno:DefinedNames?"))
++    {
++        // Whether a name would take, else why not.
++        std::map<OUString, OUString> aMap
++            = SfxLokHelper::parseCommandParameters(OUString::fromUtf8(rCommand));
++        const ScRangeData::IsNameValidType eName
++            = ScRangeData::IsNameValid(aMap[u"name"_ustr], pDocShell->GetDocument());
++        rJsonWriter.put("commandName", ".uno:DefinedNames");
++        rJsonWriter.put("name", eName == ScRangeData::IsNameValidType::NAME_VALID ? "valid"
++                                : eName == ScRangeData::IsNameValidType::NAME_INVALID_CELL_REF
++                                    ? "address"
++                                    : "characters");
++        return;
++    }
+     if (!pDocShell || !o3tl::starts_with(rCommand, ".uno:SheetReferences"))
+         return;
+     std::map<OUString, OUString> aMap
+--- a/sc/source/ui/view/cellsh1.cxx
++++ b/sc/source/ui/view/cellsh1.cxx
+@@ -67,6 +67,8 @@
+ #include <transobj.hxx>
+ #include <drwtrans.hxx>
+ #include <docfunc.hxx>
++#include <globalnames.hxx>
++#include <rangenam.hxx>
+ #include <editable.hxx>
+ #include <dpobject.hxx>
+ #include <dpsave.hxx>
+@@ -109,6 +111,42 @@
+ using namespace ::com::sun::star::uno;
+ 
+ namespace{
++/// Sets a name; an empty rSymbol removes it.
++bool lcl_DefineName(ScDocShell& rDocSh, const ScAddress& rPos, const OUString& rName,
++                    const OUString& rSymbol, const OUString& rScope)
++{
++    ScDocument& rDoc = rDocSh.GetDocument();
++    SCTAB nScope = -1;
++    if (!rScope.isEmpty() && !rDoc.GetTable(rScope, nScope))
++        return false;
++    std::map<OUString, ScRangeName*> aOld;
++    rDoc.GetRangeNameMap(aOld);
++    std::map<OUString, ScRangeName> aNew;
++    for (const auto& [rKey, pNames] : aOld)
++        aNew.emplace(rKey, *pNames);
++    ScRangeName& rList = aNew[rScope.isEmpty() ? STR_GLOBAL_RANGE_NAME : rScope];
++    const ScRangeData* pOld = rList.findByUpperName(ScGlobal::getCharClass().uppercase(rName));
++    const sal_uInt16 nIndex = pOld ? pOld->GetIndex() : 0;
++    if (pOld)
++        rList.erase(*pOld);
++    else if (rSymbol.isEmpty())
++        return false;
++    if (!rSymbol.isEmpty())
++    {
++        if (ScRangeData::IsNameValid(rName, rDoc) != ScRangeData::IsNameValidType::NAME_VALID)
++            return false;
++        std::unique_ptr<ScRangeData> pNew(new ScRangeData(
++            rDoc, rName, rSymbol, rPos, ScRangeData::Type::Name, rDoc.GetGrammar()));
++        if (pNew->GetErrCode() != FormulaError::NONE)
++            return false;
++        pNew->SetIndex(nIndex);
++        if (!rList.insert(pNew.release(), false))
++            return false;
++    }
++    rDocSh.GetDocFunc().ModifyAllRangeNames(aNew);
++    return true;
++}
++
+ InsertDeleteFlags FlagsFromString(const OUString& rFlagsStr,
+     InsertDeleteFlags nFlagsMask = InsertDeleteFlags::CONTENTS | InsertDeleteFlags::ATTRIB)
+ {
+@@ -2249,7 +2287,17 @@
+                 if( pReqArgs->HasItem( FN_PARAM_2, &pItem ) )
+                     aAttrib = static_cast<const SfxStringItem*>(pItem)->GetValue();
+ 
+-                if ( !aName.isEmpty() && !aSymbol.isEmpty() )
++                if (comphelper::LibreOfficeKit::isActive() && !aName.isEmpty())
++                {
++                    OUString aScope;
++                    if (pReqArgs->HasItem(FN_PARAM_3, &pItem))
++                        aScope = static_cast<const SfxStringItem*>(pItem)->GetValue();
++                    const ScAddress aPos(GetViewData().GetCurX(), GetViewData().GetCurY(),
++                                         GetViewData().CurrentTabForData());
++                    if (lcl_DefineName(*GetViewData().GetDocShell(), aPos, aName, aSymbol, aScope))
++                        rReq.Done();
++                }
++                else if ( !aName.isEmpty() && !aSymbol.isEmpty() )
+                 {
+                     if (pTabViewShell->InsertName( aName, aSymbol, aAttrib ))
+                         rReq.Done();
+--- a/sc/source/ui/view/viewfunc.cxx
++++ b/sc/source/ui/view/viewfunc.cxx
+@@ -630,6 +630,12 @@
+                                                : context->aComp->GetCorrectedFormula();
+         if (context->aCorrectedFormula.getLength() == 1) {
+             // empty formula, just '='
++            if (context->pArrFirst)
++                context->pArr = context->pArrFirst;
++        }
++        else if (comphelper::LibreOfficeKit::isActive())
++        {
++            // No query: the formula enters as typed.
+             if (context->pArrFirst)
+                 context->pArr = context->pArrFirst;
+         }
+--- a/sfx2/source/control/unoctitm.cxx
++++ b/sfx2/source/control/unoctitm.cxx
+@@ -1499,6 +1499,7 @@
+         { u"ToggleMergeCells", { PayloadType::BooleanOrDisabledPayload, true } },
+         { u"SheetRightToLeft", { PayloadType::BooleanOrDisabledPayload, true } },
+         { u"ToggleSheetGrid", { PayloadType::BooleanOrDisabledPayload, true } },
++        { u"AutomaticCalculation", { PayloadType::BooleanPayload, true } },
+         { u"EditDoc", { PayloadType::BooleanOrDisabledPayload, true } },
+ 
+         { u"Position", { PayloadType::PointPayload, false } },

@@ -1,0 +1,13 @@
+--- a/vcl/osx/salinst.cxx
++++ b/vcl/osx/salinst.cxx
+@@ -657,7 +657,9 @@
+         // window is in live resize
+         bool bOldIsWaitingForNativeEvent = ImplGetSVData()->mpWinData->mbIsWaitingForNativeEvent;
+         ImplGetSVData()->mpWinData->mbIsWaitingForNativeEvent = !o3tl::IsRunningUnitTest();
+-        if( bWait && ! bHadEvent && !ImplGetSVData()->mpWinData->mbIsLiveResize )
++        // A due timer would never wake the native wait.
++        const bool bTimerDue = pTimer && pTimer->IsDirectTimeout();
++        if( bWait && ! bHadEvent && !bTimerDue && !ImplGetSVData()->mpWinData->mbIsLiveResize )
+         {
+             SolarMutexReleaser aReleaser;
+ 

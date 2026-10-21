@@ -1,0 +1,53 @@
+Calc: export the chart model's placement mode
+
+Chart export unconditionally wrote twoCellAnchor editAs="oneCell".
+That changed page-fixed and resize-with-cell charts into move-only charts.
+Select the mode from ScDrawLayer::GetAnchorType instead of a constant.
+Keep the existing from/to geometry and use the actual edited model.
+
+The regression covers all three placement modes through six input forms,
+including omitted editAs and twoCellAnchor overrides. It checks both the
+flat-ODF model and the saved workbook before and after reopening.
+A rebuilt engine is still required for execution of this C++ change.
+
+diff --git a/sc/source/filter/excel/xeescher.cxx b/sc/source/filter/excel/xeescher.cxx
+--- a/sc/source/filter/excel/xeescher.cxx
++++ b/sc/source/filter/excel/xeescher.cxx
+@@ -30,6 +30,7 @@
+ #include <com/sun/star/form/binding/XListEntrySink.hpp>
+ #include <com/sun/star/awt/Size.hpp>
+ #include <com/sun/star/chart/XChartDocument.hpp>
++#include <com/sun/star/uno/RuntimeException.hpp>
+ 
+ #include <set>
+ #include <vcl/BitmapReadAccess.hxx>
+@@ -1631,9 +1632,26 @@
+ {
+     sax_fastparser::FSHelperPtr pDrawing = rStrm.GetCurrentStream();
+ 
+-    // FIXME: two cell? it seems the two cell anchor is incorrect.
+-    pDrawing->startElement( FSNS( XML_xdr, XML_twoCellAnchor ), // OOXTODO: oneCellAnchor, absoluteAnchor
+-            XML_editAs, "oneCell" );
++    SdrObject* pObj = SdrObject::getSdrObjectFromXShape(mxShape);
++    if (!pObj)
++        throw uno::RuntimeException(u"Missing chart drawing object"_ustr);
++
++    const char* pEditAs;
++    switch (ScDrawLayer::GetAnchorType(*pObj))
++    {
++        case SCA_CELL:
++            pEditAs = "oneCell";
++            break;
++        case SCA_CELL_RESIZE:
++            pEditAs = "twoCell";
++            break;
++        case SCA_PAGE:
++            pEditAs = "absolute";
++            break;
++        default:
++            throw uno::RuntimeException(u"Invalid chart anchor type"_ustr);
++    }
++    pDrawing->startElement(FSNS(XML_xdr, XML_twoCellAnchor), XML_editAs, pEditAs);
+     Reference< XPropertySet > xPropSet( mxShape, UNO_QUERY );
+     if (xPropSet.is())
+     {

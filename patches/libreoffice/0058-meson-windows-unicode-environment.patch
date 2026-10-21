@@ -1,0 +1,106 @@
+diff --git a/external/meson/UnpackedTarball_meson.mk b/external/meson/UnpackedTarball_meson.mk
+index b15b728..4ccbd8e 100644
+--- a/external/meson/UnpackedTarball_meson.mk
++++ b/external/meson/UnpackedTarball_meson.mk
+@@ -11,6 +11,10 @@ $(eval $(call gb_UnpackedTarball_UnpackedTarball,meson))
+ 
+ $(eval $(call gb_UnpackedTarball_set_tarball,meson,$(MESON_TARBALL)))
+ 
++$(eval $(call gb_UnpackedTarball_add_patches,meson,\
++    external/meson/windows-env-json.patch.1 \
++))
++
+ ifeq ($(OS),WNT)
+ # hack to make meson use a specific VS version and not always the latest
+ # (argument is '-latest' so inner quotes to separate the arguments
+diff --git a/external/meson/windows-env-json.patch.1 b/external/meson/windows-env-json.patch.1
+new file mode 100644
+index 0000000..ee78992
+--- /dev/null
++++ b/external/meson/windows-env-json.patch.1
+@@ -0,0 +1,85 @@
++diff --git a/mesonbuild/utils/vsenv.py b/mesonbuild/utils/vsenv.py
++index 5a02379..20d33a3 100644
++--- a/mesonbuild/utils/vsenv.py
+++++ b/mesonbuild/utils/vsenv.py
++@@ -6,7 +6,7 @@ import json
++ import pathlib
++ import shutil
++ import tempfile
++-import locale
+++import sys
++ 
++ from .. import mlog
++ from .core import MesonException
++@@ -19,11 +19,12 @@ __all__ = [
++ 
++ 
++ bat_template = '''@ECHO OFF
+++SETLOCAL DisableDelayedExpansion
++ 
++-call "{}"
+++call "%__MESON_VSENV_VCVARS%"
+++IF ERRORLEVEL 1 EXIT /B %ERRORLEVEL%
++ 
++-ECHO {}
++-SET
+++"%__MESON_VSENV_PYTHON%" -I -c "import json, os, pathlib; pathlib.Path(os.environ['__MESON_VSENV_EXPORT']).write_text(json.dumps(dict(os.environ)), encoding='utf-8')"
++ '''
++ 
++ # If on Windows and VS is installed but not set up in the environment,
++@@ -88,32 +89,29 @@ def _setup_vsenv(force: bool) -> bool:
++         raise MesonException(f'Could not find {bat_path}')
++ 
++     mlog.log('Activating VS', bat_info[0]['catalog']['productDisplayVersion'])
++-    bat_separator = '---SPLIT---'
++-    bat_contents = bat_template.format(bat_path, bat_separator)
++-    bat_file = tempfile.NamedTemporaryFile('w', suffix='.bat', encoding='utf-8', delete=False)
++-    bat_file.write(bat_contents)
++-    bat_file.flush()
++-    bat_file.close()
++-    bat_output = subprocess.check_output(bat_file.name, universal_newlines=True,
++-                                         encoding=locale.getpreferredencoding(False))
++-    os.unlink(bat_file.name)
++-    bat_lines = bat_output.split('\n')
++-    bat_separator_seen = False
++-    for bat_line in bat_lines:
++-        if bat_line == bat_separator:
++-            bat_separator_seen = True
++-            continue
++-        if not bat_separator_seen:
++-            continue
++-        if not bat_line:
++-            continue
++-        try:
++-            k, v = bat_line.split('=', 1)
++-        except ValueError:
++-            # there is no "=", ignore junk data
++-            pass
++-        else:
++-            os.environ[k] = v
+++    with tempfile.NamedTemporaryFile(delete=False) as env_file:
+++        pass
+++    bat_name = None
+++    try:
+++        with tempfile.NamedTemporaryFile('w', suffix='.bat', encoding='ascii', delete=False) as bat_file:
+++            bat_name = bat_file.name
+++            bat_file.write(bat_template)
+++        paths = {'__MESON_VSENV_VCVARS': str(bat_path).replace('%', '%%'),
+++                 '__MESON_VSENV_PYTHON': sys.executable,
+++                 '__MESON_VSENV_EXPORT': env_file.name,
+++                 '__MESON_VSENV_BATCH': bat_name}
+++        command = (subprocess.list2cmdline([os.environ['COMSPEC']]) +
+++                   ' /d /v:off /c ""%__MESON_VSENV_BATCH%""')
+++        subprocess.check_call(command, stdout=subprocess.DEVNULL, env={**os.environ, **paths})
+++        with open(env_file.name, encoding='utf-8') as stream:
+++            vsenv = json.load(stream)
+++        for key in paths:
+++            del vsenv[key]
+++        os.environ.update(vsenv)
+++    finally:
+++        if bat_name is not None:
+++            os.unlink(bat_name)
+++        os.unlink(env_file.name)
++     return True
++ 
++ def setup_vsenv(force: bool = False) -> bool:

@@ -1,0 +1,252 @@
+PDF: Impress handouts
+
+A PDF export with ExportHandouts (slides per handout page: 1, 2, 3,
+4, 6 or 9) lays the shown slides of PageRange on handout pages, the
+print dialog's way; three a page leave lines for notes. Other counts
+give no pages, and the export fails.
+
+diff --git a/filter/source/pdf/pdfexport.cxx b/filter/source/pdf/pdfexport.cxx
+index c70cb59..838f861 100644
+--- a/filter/source/pdf/pdfexport.cxx
++++ b/filter/source/pdf/pdfexport.cxx
+@@ -411,6 +411,7 @@ bool PDFExport::Export( const OUString& rFile, const Sequence< PropertyValue >&
+             bool bExportNotes = true;
+             bool bExportNotesInMargin = false;
+             bool bExportNotesPages = false;
++            sal_Int32 nExportHandouts = 0;
+             bool bExportOnlyNotesPages = false;
+             bool bUseTransitionEffects = true;
+             bool bExportFormFields = false;
+@@ -570,6 +571,8 @@ bool PDFExport::Export( const OUString& rFile, const Sequence< PropertyValue >&
+                     rProp.Value >>= bExportNotes;
+                 else if ( rProp.Name == "ExportNotesInMargin" )
+                     rProp.Value >>= bExportNotesInMargin;
++                else if ( rProp.Name == "ExportHandouts" )
++                    rProp.Value >>= nExportHandouts;
+                 else if ( rProp.Name == "ExportNotesPages" )
+                     rProp.Value >>= bExportNotesPages;
+                 else if ( rProp.Name == "ExportOnlyNotesPages" )
+@@ -1074,7 +1077,8 @@ bool PDFExport::Export( const OUString& rFile, const Sequence< PropertyValue >&
+                     comphelper::makePropertyValue(u"PageRange"_ustr, aPageRange),
+                     comphelper::makePropertyValue(u"ExportPlaceholders"_ustr, bExportPlaceholders),
+                     comphelper::makePropertyValue(u"SinglePageSheets"_ustr, bSinglePageSheets),
+-                    comphelper::makePropertyValue(u"ExportNotesInMargin"_ustr, bExportNotesInMargin)
++                    comphelper::makePropertyValue(u"ExportNotesInMargin"_ustr, bExportNotesInMargin),
++                    comphelper::makePropertyValue(u"ExportHandouts"_ustr, nExportHandouts)
+                 };
+                 if (oMathTitleRow)
+                     aRenderOptionsVector.push_back(*oMathTitleRow);
+@@ -1157,7 +1161,8 @@ bool PDFExport::Export( const OUString& rFile, const Sequence< PropertyValue >&
+                     bExportNotesPages = false;
+                 const bool bExportPages = !bExportNotesPages || !bExportOnlyNotesPages;
+ 
+-                if( aPageRange.isEmpty() || bSinglePageSheets)
++                // Handout ranges name slides; every handout page goes out.
++                if( aPageRange.isEmpty() || bSinglePageSheets || nExportHandouts)
+                 {
+                     aPageRange = OUString::number( 1 ) + "-" + OUString::number(nPageCount );
+                 }
+diff --git a/sd/source/ui/unoidl/unomodel.cxx b/sd/source/ui/unoidl/unomodel.cxx
+index 035566a..3aa98bc 100644
+--- a/sd/source/ui/unoidl/unomodel.cxx
++++ b/sd/source/ui/unoidl/unomodel.cxx
+@@ -198,6 +198,10 @@
+ #include <tools/UnitConversion.hxx>
+ #include <svx/ColorSets.hxx>
+ #include <docmodel/theme/Theme.hxx>
++#include <svx/svdopage.hxx>
++#include <svx/svdopath.hxx>
++#include <tools/multisel.hxx>
++#include <basegfx/matrix/b2dhommatrix.hxx>
+ 
+ #include <frozen/bits/defines.h>
+ #include <frozen/bits/elsa_std.h>
+@@ -3393,8 +3397,103 @@ uno::Reference< css::ucb::XAnyCompare > SAL_CALL SdXImpressDocument::createAnyCo
+ }
+ 
+ // XRenderable
++namespace
++{
++/// Slides per handout page asked; 0 is none.
++sal_Int32 lcl_Handouts(const uno::Sequence<beans::PropertyValue>& rOptions)
++{
++    sal_Int32 nPer = 0;
++    for (const auto& rOption : rOptions)
++        if (rOption.Name == "ExportHandouts")
++            rOption.Value >>= nPer;
++    return nPer;
++}
++
++/// The shown slides in the options' range.
++std::vector<sal_uInt16> lcl_HandoutSlides(SdDrawDocument& rDoc, const uno::Sequence<beans::PropertyValue>& rOptions)
++{
++    const sal_uInt16 nCount = rDoc.GetSdPageCount(PageKind::Standard);
++    OUString aRange;
++    for (const auto& rOption : rOptions)
++        if (rOption.Name == "PageRange")
++            rOption.Value >>= aRange;
++    if (aRange.isEmpty())
++        aRange = "1-" + OUString::number(nCount);
++    std::vector<sal_uInt16> aSlides;
++    for (sal_Int32 nAt : StringRangeEnumerator(aRange, 0, nCount - 1))
++        if (!rDoc.GetSdPage(nAt, PageKind::Standard)->IsExcluded())
++            aSlides.push_back(nAt);
++    return aSlides;
++}
++
++/// Lays out the handout page as printing does.
++bool lcl_HandoutTemplate(SdDrawDocument& rDoc, sal_Int32 nPer)
++{
++    AutoLayout eLayout = AUTOLAYOUT_NONE;
++    switch (nPer)
++    {
++        case 1: eLayout = AUTOLAYOUT_HANDOUT1; break;
++        case 2: eLayout = AUTOLAYOUT_HANDOUT2; break;
++        case 3: eLayout = AUTOLAYOUT_HANDOUT3; break;
++        case 4: eLayout = AUTOLAYOUT_HANDOUT4; break;
++        case 6: eLayout = AUTOLAYOUT_HANDOUT6; break;
++        case 9: eLayout = AUTOLAYOUT_HANDOUT9; break;
++        default: return false;
++    }
++    SdPage* pHandout = rDoc.GetSdPage(0, PageKind::Handout);
++    if (!pHandout)
++        return false;
++    while (pHandout->GetObjCount())
++        pHandout->NbcRemoveObject(0);
++    const Size aSize = pHandout->GetSize();
++    std::vector<::tools::Rectangle> aAreas;
++    SdPage::CalculateHandoutAreas(rDoc, eLayout, false, aAreas,
++        aSize.Width() > aSize.Height() ? Orientation::Landscape : Orientation::Portrait);
++    for (auto it = aAreas.begin(); it != aAreas.end();)
++    {
++        pHandout->NbcInsertObject(new SdrPageObj(rDoc, *it++));
++        // Three a page leave lines for notes.
++        if (eLayout != AUTOLAYOUT_HANDOUT3 || it == aAreas.end())
++            continue;
++        const ::tools::Rectangle aRect(*it++);
++        basegfx::B2DPolygon aLine;
++        aLine.append(basegfx::B2DPoint(aRect.Left(), aRect.Top()));
++        aLine.append(basegfx::B2DPoint(aRect.Right(), aRect.Top()));
++        basegfx::B2DHomMatrix aStep;
++        aStep.translate(0.0, static_cast<double>(aRect.GetHeight() / 7));
++        basegfx::B2DPolyPolygon aLines;
++        for (int n = 0; n < 7; ++n)
++        {
++            aLine.transform(aStep);
++            aLines.append(aLine);
++        }
++        rtl::Reference<SdrPathObj> pPath = new SdrPathObj(rDoc, SdrObjKind::PathLine, std::move(aLines));
++        pPath->SetMergedItem(XLineStyleItem(drawing::LineStyle_SOLID));
++        pPath->SetMergedItem(XLineColorItem(OUString(), COL_BLACK));
++        pHandout->NbcInsertObject(pPath.get());
++    }
++    return true;
++}
++
++/// Shows handout page `nPage` of `rSlides`; empty frames hide.
++void lcl_HandoutPage(SdDrawDocument& rDoc, const std::vector<sal_uInt16>& rSlides, sal_Int32 nPage)
++{
++    SdPage& rHandout = *rDoc.GetSdPage(0, PageKind::Handout);
++    std::vector<SdrPageObj*> aFrames;
++    for (const rtl::Reference<SdrObject>& pObj : rHandout)
++        if (auto pFrame = dynamic_cast<SdrPageObj*>(pObj.get()))
++            aFrames.push_back(pFrame);
++    for (size_t n = 0; n < aFrames.size(); ++n)
++    {
++        const size_t nAt = nPage * aFrames.size() + n;
++        aFrames[n]->SetReferencedPage(nAt < rSlides.size()
++            ? rDoc.GetSdPage(rSlides[nAt], PageKind::Standard) : nullptr);
++    }
++}
++}
++
+ sal_Int32 SAL_CALL SdXImpressDocument::getRendererCount( const uno::Any& rSelection,
+-                                                         const uno::Sequence< beans::PropertyValue >&  )
++                                                         const uno::Sequence< beans::PropertyValue >& rxOptions )
+ {
+     ::SolarMutexGuard aGuard;
+     sal_Int32   nRet = 0;
+@@ -3408,7 +3507,14 @@ sal_Int32 SAL_CALL SdXImpressDocument::getRendererCount( const uno::Any& rSelect
+ 
+         rSelection >>= xModel;
+ 
+-        if( xModel == mpDocShell->GetModel() )
++        const sal_Int32 nPer = lcl_Handouts(rxOptions);
++        if (xModel == mpDocShell->GetModel() && nPer)
++        {
++            // An unknown layout gives no pages; the export fails.
++            const size_t nSlides = lcl_HandoutSlides(*mpDoc, rxOptions).size();
++            nRet = lcl_HandoutTemplate(*mpDoc, nPer) ? (nSlides + nPer - 1) / nPer : 0;
++        }
++        else if( xModel == mpDocShell->GetModel() )
+             nRet = mpDoc->GetSdPageCount( PageKind::Standard );
+         else
+         {
+@@ -3441,7 +3547,12 @@ uno::Sequence< beans::PropertyValue > SAL_CALL SdXImpressDocument::getRenderer(
+     if (mpDocShell)
+     {
+         awt::Size aPageSize;
+-        if ( bExportNotesPages )
++        if (lcl_Handouts(rxOptions))
++        {
++            const Size aHandout = mpDoc->GetSdPage(0, PageKind::Handout)->GetSize();
++            aPageSize = awt::Size(aHandout.Width(), aHandout.Height());
++        }
++        else if ( bExportNotesPages )
+         {
+             Size aNotesPageSize = mpDoc->GetSdPage( 0, PageKind::Notes )->GetSize();
+             aPageSize = awt::Size( aNotesPageSize.Width(), aNotesPageSize.Height() );
+@@ -3830,7 +3941,16 @@ void SAL_CALL SdXImpressDocument::render( sal_Int32 nRenderer, const uno::Any& r
+         }
+     }
+ 
+-    if( !(xRenderDevice.is() && nPageNumber && ( nPageNumber <= mpDoc->GetSdPageCount( ePageKind ) )) )
++    const sal_Int32 nHandouts = lcl_Handouts(rxOptions);
++    if (nHandouts)
++    {
++        ePageKind = PageKind::Handout;
++        lcl_HandoutPage(*mpDoc, lcl_HandoutSlides(*mpDoc, rxOptions), nRenderer);
++    }
++    SdPage* pShown = nHandouts ? mpDoc->GetSdPage(0, PageKind::Handout)
++        : nPageNumber <= mpDoc->GetSdPageCount(ePageKind)
++        ? mpDoc->GetSdPage(static_cast<sal_uInt16>(nPageNumber) - 1, ePageKind) : nullptr;
++    if( !(xRenderDevice.is() && pShown) )
+         return;
+ 
+     VCLXDevice* pDevice = dynamic_cast<VCLXDevice*>( xRenderDevice.get() );
+@@ -3841,7 +3961,7 @@ void SAL_CALL SdXImpressDocument::render( sal_Int32 nRenderer, const uno::Any& r
+ 
+     vcl::PDFExtOutDevData* pPDFExtOutDevData = dynamic_cast<vcl::PDFExtOutDevData* >( pOut->GetExtOutDevData() );
+ 
+-    if ( mpDoc->GetSdPage(static_cast<sal_Int16>(nPageNumber)-1, PageKind::Standard)->IsExcluded() &&
++    if ( !nHandouts && mpDoc->GetSdPage(static_cast<sal_Int16>(nPageNumber)-1, PageKind::Standard)->IsExcluded() &&
+         !(pPDFExtOutDevData && pPDFExtOutDevData->GetIsExportHiddenSlides()) )
+         return;
+ 
+@@ -3852,7 +3972,7 @@ void SAL_CALL SdXImpressDocument::render( sal_Int32 nRenderer, const uno::Any& r
+     }
+ 
+     ::sd::ClientView aView( mpDocShell, pOut );
+-    ::tools::Rectangle aVisArea( Point(), mpDoc->GetSdPage( static_cast<sal_uInt16>(nPageNumber) - 1, ePageKind )->GetSize() );
++    ::tools::Rectangle aVisArea( Point(), pShown->GetSize() );
+     vcl::Region                       aRegion( aVisArea );
+ 
+     ::sd::ViewShell* pOldViewSh = mpDocShell->GetViewShell();
+@@ -3875,7 +3995,7 @@ void SAL_CALL SdXImpressDocument::render( sal_Int32 nRenderer, const uno::Any& r
+ 
+     if( xModel == mpDocShell->GetModel() )
+     {
+-        aView.ShowSdrPage( mpDoc->GetSdPage( static_cast<sal_uInt16>(nPageNumber) - 1, ePageKind ));
++        aView.ShowSdrPage( pShown );
+         SdrPageView* pPV = aView.GetSdrPageView();
+ 
+         if( pOldSdView )
+@@ -4092,7 +4212,7 @@ void SAL_CALL SdXImpressDocument::render( sal_Int32 nRenderer, const uno::Any& r
+                 rBookmarks.clear();
+                 //---> #i56629, #i40318
+                 //get the page name, will be used as outline element in PDF bookmark pane
+-                OUString aPageName = mpDoc->GetSdPage( static_cast<sal_uInt16>(nPageNumber) - 1 , PageKind::Standard )->GetName();
++                OUString aPageName = nHandouts ? OUString() : mpDoc->GetSdPage( static_cast<sal_uInt16>(nPageNumber) - 1 , PageKind::Standard )->GetName();
+                 if( !aPageName.isEmpty() )
+                 {
+                     // Destination PageNum

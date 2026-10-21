@@ -1,0 +1,112 @@
+--- a/include/sfx2/lokunocmdlist.hxx
++++ b/include/sfx2/lokunocmdlist.hxx
+@@ -35,6 +35,8 @@
+     StrSeqPayload,
+     TableSizePayload,
+     ULSpacingPayload,
++    MarginsPayload,
++    PageItemPayload,
+ };
+ 
+ struct KitUnoCommand
+--- a/sfx2/source/control/unoctitm.cxx
++++ b/sfx2/source/control/unoctitm.cxx
+@@ -36,6 +36,9 @@
+ #include <com/sun/star/util/XURLTransformer.hpp>
+ #include <com/sun/star/frame/XFrame.hpp>
+ #include <com/sun/star/frame/status/UpperLowerMarginScale.hpp>
++#include <com/sun/star/frame/status/LeftRightMargin.hpp>
++#include <com/sun/star/frame/status/UpperLowerMargin.hpp>
++#include <com/sun/star/style/PageStyleLayout.hpp>
+ #include <com/sun/star/frame/status/FontHeight.hpp>
+ #include <com/sun/star/frame/status/ItemStatus.hpp>
+ #include <com/sun/star/frame/status/ItemState.hpp>
+@@ -983,6 +986,39 @@
+         return aEvent.FeatureURL.Complete.toUtf8() + "=";
+     return aEvent.FeatureURL.Complete.toUtf8() + "=" + OString::number(aMargin.Upper) + ","
+            + OString::number(aMargin.Lower);
++}
++
++// Page margins in 1/100 mm: "left,right" or "upper,lower".
++OString MarginsPayload(sal_uInt16, SfxViewFrame*, const css::frame::FeatureStateEvent& aEvent,
++                       const SfxPoolItem*)
++{
++    OString aCommand = aEvent.FeatureURL.Complete.toUtf8() + "=";
++    if (css::frame::status::LeftRightMargin aLR; aEvent.State >>= aLR)
++        return aCommand + OString::number(aLR.Left) + "," + OString::number(aLR.Right);
++    if (css::frame::status::UpperLowerMargin aUL; aEvent.State >>= aUL)
++        return aCommand + OString::number(aUL.Upper) + "," + OString::number(aUL.Lower);
++    return aCommand;
++}
++
++// The page item: "landscape,layout,numtype".
++OString PageItemPayload(sal_uInt16, SfxViewFrame*, const css::frame::FeatureStateEvent& aEvent,
++                        const SfxPoolItem* pState)
++{
++    OString aCommand = aEvent.FeatureURL.Complete.toUtf8() + "=";
++    if (!pState || IsInvalidItem(pState) || IsDisabledItem(pState))
++        return aCommand;
++    // Member ids of SvxPageItem, as svx/unomid.hxx defines them.
++    constexpr sal_uInt8 MID_PAGE_NUMTYPE = 0, MID_PAGE_ORIENTATION = 1, MID_PAGE_LAYOUT = 2;
++    css::uno::Any aLandscape, aLayout, aNumType;
++    bool bLandscape = false;
++    css::style::PageStyleLayout eLayout = css::style::PageStyleLayout_ALL;
++    sal_Int16 nNumType = 0;
++    if (!pState->QueryValue(aLandscape, MID_PAGE_ORIENTATION) || !(aLandscape >>= bLandscape)
++        || !pState->QueryValue(aLayout, MID_PAGE_LAYOUT) || !(aLayout >>= eLayout)
++        || !pState->QueryValue(aNumType, MID_PAGE_NUMTYPE) || !(aNumType >>= nNumType))
++        return aCommand;
++    return aCommand + OString::boolean(bLandscape) + "," + OString::number(sal_Int32(eLayout))
++           + "," + OString::number(nNumType);
+ }
+ 
+ OString ColorPayload(sal_uInt16, SfxViewFrame*, const css::frame::FeatureStateEvent& aEvent,
+@@ -1168,6 +1204,8 @@
+     { PayloadType::FontHeightPayload, FontHeightPayload },
+     { PayloadType::StyleApplyPayload, StyleApplyPayload },
+     { PayloadType::ULSpacingPayload, ULSpacingPayload },
++    { PayloadType::MarginsPayload, MarginsPayload },
++    { PayloadType::PageItemPayload, PageItemPayload },
+     { PayloadType::ColorPayload, ColorPayload },
+     { PayloadType::UndoRedoPayload, UndoRedoPayload },
+     { PayloadType::EnabledPayload, EnabledPayload },
+@@ -1245,6 +1283,20 @@
+         { u"StyleApply", { PayloadType::StyleApplyPayload, true } },
+         { u"CharStyle", { PayloadType::StyleApplyPayload, true } },
+         { u"ULSpacing", { PayloadType::ULSpacingPayload, true } },
++        { u"AttributePageSize", { PayloadType::SizePayload, true } },
++        { u"AttributePage", { PayloadType::PageItemPayload, true } },
++        { u"PageLRMargin", { PayloadType::MarginsPayload, true } },
++        { u"PageULMargin", { PayloadType::MarginsPayload, true } },
++        { u"PageColumnType", { PayloadType::Int32Payload, true } },
++        { u"SwPageHeaderItem", { PayloadType::BooleanPayload, true } },
++        { u"SwPageFooterItem", { PayloadType::BooleanPayload, true } },
++        { u"SwPageHeaderLayout", { PayloadType::Int32Payload, true } },
++        { u"SwPageFooterLayout", { PayloadType::Int32Payload, true } },
++        { u"SetAnchorToPage", { PayloadType::BooleanOrDisabledPayload, true } },
++        { u"SetAnchorToPara", { PayloadType::BooleanOrDisabledPayload, true } },
++        { u"SetAnchorAtChar", { PayloadType::BooleanOrDisabledPayload, true } },
++        { u"SetAnchorToChar", { PayloadType::BooleanOrDisabledPayload, true } },
++        { u"HeadingRowsRepeat", { PayloadType::BooleanOrDisabledPayload, true } },
+ 
+         { u"BackColor", { PayloadType::ColorPayload, false } },
+         { u"BackgroundColor", { PayloadType::ColorPayload, true } },
+@@ -1307,12 +1359,12 @@
+         { u"SendToBack", { PayloadType::EnabledPayload, true } },
+         { u"ObjectForwardOne", { PayloadType::EnabledPayload, true } },
+         { u"BringToFront", { PayloadType::EnabledPayload, true } },
+-        { u"WrapRight", { PayloadType::EnabledPayload, true } },
+-        { u"WrapThrough", { PayloadType::EnabledPayload, true } },
+-        { u"WrapLeft", { PayloadType::EnabledPayload, true } },
+-        { u"WrapIdeal", { PayloadType::EnabledPayload, true } },
+-        { u"WrapOn", { PayloadType::EnabledPayload, true } },
+-        { u"WrapOff", { PayloadType::EnabledPayload, true } },
++        { u"WrapRight", { PayloadType::BooleanOrDisabledPayload, true } },
++        { u"WrapThrough", { PayloadType::BooleanOrDisabledPayload, true } },
++        { u"WrapLeft", { PayloadType::BooleanOrDisabledPayload, true } },
++        { u"WrapIdeal", { PayloadType::BooleanOrDisabledPayload, true } },
++        { u"WrapOn", { PayloadType::BooleanOrDisabledPayload, true } },
++        { u"WrapOff", { PayloadType::BooleanOrDisabledPayload, true } },
+         { u"UpdateCurIndex", { PayloadType::EnabledPayload, true } },
+         { u"InsertCaptionDialog", { PayloadType::EnabledPayload, true } },
+         { u"SplitTable", { PayloadType::EnabledPayload, true } },

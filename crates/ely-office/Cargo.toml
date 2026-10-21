@@ -1,0 +1,29 @@
+[package]
+name = "ely-office"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+dunce.workspace = true
+anyhow.workspace = true
+directories.workspace = true
+ely-files.workspace = true
+ely-gpui-component.workspace = true
+ely-lok = { workspace = true, features = ["view"] }
+gpui.workspace = true
+log.workspace = true
+quick-xml.workspace = true
+ely-platform.workspace = true
+jiff.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+ely-ui.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

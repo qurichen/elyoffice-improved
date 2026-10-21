@@ -1,0 +1,360 @@
+//! The settings window: shared settings and this app's own.
+
+use ely_gpui_component::{
+    buttons::SegmentedControl,
+    feedback::Banner,
+    forms::{Input, InputEvent, Switch, TextInput},
+    primitives::{IconName, Severity},
+    settings::{self as kit, SettingsLayout, SettingsRow, SettingsSection, ThemeSelector},
+};
+use ely_platform::{
+    AppId,
+    settings::{APPEARANCE, AUTHOR, Appearance, CHECK_UPDATES, LANGUAGE, Language, MOTION, Motion, OMARCHY_SYNC, Store, word},
+};
+use gpui::{
+    AppContext as _, Context, Entity, FocusHandle, Global, IntoElement, ParentElement, Render, SharedString, Styled,
+    Subscription, Window, WindowHandle, div,
+};
+use serde_json::Value;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
+
+use super::{current, set};
+use crate::{i18n::text, shell::Shell};
+
+/// The open settings window, one per app.
+#[derive(Clone, Copy)]
+struct Opened(Option<WindowHandle<SettingsView>>);
+
+impl Global for Opened {}
+
+/// Opens the settings window, or brings it forward.
+pub fn open(app: AppId, cx: &mut gpui::App) {
+    let shown = cx.try_global::<Opened>().and_then(|opened| opened.0);
+    if let Some(handle) = shown
+        && handle.update(cx, |_, window, _| window.activate_window()).is_ok()
+    {
+        return;
+    }
+    let mut options = crate::run::window_options(app, gpui::size(gpui::px(720.0), gpui::px(520.0)), cx);
+    if let Some(bar) = options.titlebar.as_mut() {
+        bar.title = Some(text(cx, "settings.title", &[]));
+    }
+    match cx.open_window(options, |window, cx| cx.new(|cx| SettingsView::new(app, window, cx))) {
+        Ok(handle) => cx.set_global(Opened(Some(handle))),
+        Err(error) => log::error!("settings: the window did not open: {error:#}"),
+    }
+}
+
+pub struct SettingsView {
+    pub(super) app: AppId,
+    focus: FocusHandle,
+    section: SharedString,
+    author: Entity<TextInput>,
+    /// The name last read from or saved to the file.
+    author_saved: String,
+    /// The latest author commit; older writes are dropped.
+    author_asked: Arc<AtomicU64>,
+    git: Option<Entity<TextInput>>,
+    git_error: Option<SharedString>,
+    /// The latest Git commit; older checks are dropped.
+    git_asked: Arc<AtomicU64>,
+    pub(super) diagnostics: super::diagnostics::Diagnostics,
+    pub(super) storage: super::storage::Storage,
+    _fields: Vec<Subscription>,
+}
+
+impl SettingsView {
+    pub(super) fn new(app: AppId, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let author = cx.new(|cx| TextInput::new(window, cx).label(text(cx, "settings.author", &[])));
+        let account = ely_platform::user::account().unwrap_or_else(|error| {
+            log::warn!("settings: no account name: {error}");
+            String::new()
+        });
+        let named = current(cx).author.clone();
+        author.update(cx, |field, cx| {
+            field.set_placeholder(account, cx);
+            field.set_text(named.clone(), cx);
+        });
+        let mut fields = vec![
+            cx.subscribe(&author, |this, field, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Blur | InputEvent::Submit) {
+                    this.commit_author(&field, cx);
+                }
+            }),
+            cx.observe_global::<super::Current>(|this, cx| this.follow_author(cx)),
+        ];
+        let git = (app == AppId::Tree).then(|| cx.new(|cx| TextInput::new(window, cx).label(text(cx, "settings.git.path", &[]))));
+        let mut git_error = None;
+        if let Some(git) = &git {
+            let stored = git_setting().unwrap_or_else(|error| {
+                log::error!("settings: the Git setting is unreadable: {error}");
+                git_error = Some(text(cx, "settings.unreadable", &[("error", &error.to_string())]));
+                String::new()
+            });
+            git.update(cx, |field, cx| field.set_text(stored, cx));
+            fields.push(cx.subscribe(git, |this, field, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Blur | InputEvent::Submit) {
+                    this.commit_git(&field, cx);
+                }
+            }));
+        }
+        let focus = cx.focus_handle();
+        window.focus(&focus, cx);
+        Self {
+            app,
+            focus,
+            section: "general".into(),
+            author,
+            author_saved: named,
+            author_asked: Arc::default(),
+            git,
+            git_error,
+            git_asked: Arc::default(),
+            diagnostics: Default::default(),
+            storage: Default::default(),
+            _fields: fields,
+        }
+    }
+
+    /// A name written elsewhere replaces an unedited field.
+    fn follow_author(&mut self, cx: &mut Context<Self>) {
+        let named = current(cx).author.clone();
+        let shown = self.author.read(cx).text().trim().to_string();
+        if named != self.author_saved && shown == self.author_saved {
+            self.author.update(cx, |field, cx| field.set_text(named.clone(), cx));
+            self.author_saved = named;
+        }
+    }
+
+    /// Writes an edit; a failed one stays for retry.
+    fn commit_author(&mut self, field: &Entity<TextInput>, cx: &mut Context<Self>) {
+        let typed = field.read(cx).text().trim().to_string();
+        // Every commit outdates the writes still waiting.
+        let asked = self.author_asked.fetch_add(1, Ordering::SeqCst) + 1;
+        if typed == self.author_saved {
+            return;
+        }
+        let turn = (Arc::clone(&self.author_asked), asked);
+        let write = super::saved(AUTHOR, Value::String(typed.clone()), Some(turn), cx);
+        cx.spawn(async move |this, cx| {
+            if write.await {
+                this.update(cx, |this, _| this.author_saved = typed).ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Checks a system Git, then keeps it; latest wins.
+    fn commit_git(&mut self, field: &Entity<TextInput>, cx: &mut Context<Self>) {
+        let typed = field.read(cx).text().trim().to_string();
+        // Every commit outdates the checks still running.
+        let asked = self.git_asked.fetch_add(1, Ordering::SeqCst) + 1;
+        if git_setting().is_ok_and(|stored| stored == typed) {
+            self.git_error = None;
+            return cx.notify();
+        }
+        let latest = Arc::clone(&self.git_asked);
+        let check = cx.background_executor().spawn({
+            let typed = typed.clone();
+            async move {
+                if !typed.is_empty() {
+                    ely_platform::git::system_version(std::path::Path::new(&typed))?;
+                }
+                // Under the file lock: a later commit skips this.
+                let still = || latest.load(Ordering::SeqCst) == asked;
+                Store::app(AppId::Tree)?.set_if(ely_platform::git::PROGRAM, Value::String(typed), still)
+            }
+        });
+        cx.spawn(async move |this, cx| {
+            let checked = check.await;
+            this.update(cx, |this, cx| {
+                if this.git_asked.load(Ordering::SeqCst) != asked {
+                    return log::info!("settings: Git check {asked} was overtaken");
+                }
+                this.git_error = checked.err().map(|error| {
+                    log::warn!("settings: Git setting refused: {error}");
+                    text(cx, "settings.git.bad", &[("path", &typed), ("error", &error.to_string())])
+                });
+                cx.notify();
+            })
+        })
+        .detach();
+    }
+
+    pub(super) fn sections(&self, cx: &gpui::App) -> Vec<(&'static str, SharedString, IconName)> {
+        let mut sections = vec![("general", text(cx, "settings.general", &[]), IconName::Settings)];
+        if matches!(self.app, AppId::Doc | AppId::Table | AppId::Show | AppId::Pdf) {
+            sections.push(("documents", text(cx, "settings.documents", &[]), IconName::FileText));
+        }
+        if self.git.is_some() {
+            sections.push(("git", text(cx, "settings.git", &[]), IconName::GitBranch));
+        }
+        sections.push(("storage", text(cx, "settings.storage", &[]), IconName::HardDrive));
+        sections.push(("diagnostics", text(cx, "settings.diagnostics", &[]), IconName::Bug));
+        sections
+    }
+
+    fn general(&self, cx: &gpui::App) -> SettingsSection {
+        let shared = current(cx);
+        let appearance = match shared.appearance {
+            Appearance::System => kit::Appearance::System,
+            Appearance::Light => kit::Appearance::Light,
+            Appearance::Dark => kit::Appearance::Dark,
+        };
+        let theme = ThemeSelector::new("settings-appearance", appearance, |chosen, _, cx| {
+            let chosen = match chosen {
+                kit::Appearance::System => Appearance::System,
+                kit::Appearance::Light => Appearance::Light,
+                kit::Appearance::Dark => Appearance::Dark,
+            };
+            set(APPEARANCE, word(&Appearance::ALL, &chosen).into(), cx);
+        });
+        let language = choices("settings-language", &Language::ALL, &shared.language, |choice, cx| match choice {
+            Language::System => text(cx, "settings.language.system", &[]),
+            Language::English => "English".into(),
+            Language::Chinese => "简体中文".into(),
+        }, LANGUAGE, cx);
+        let motion = choices("settings-motion", &Motion::ALL, &shared.motion, |choice, cx| match choice {
+            Motion::System => text(cx, "settings.motion.system", &[]),
+            Motion::Reduced => text(cx, "settings.motion.reduce", &[]),
+            Motion::Full => text(cx, "settings.motion.full", &[]),
+        }, MOTION, cx);
+        let section = SettingsSection::new(text(cx, "settings.general", &[]))
+            .row(SettingsRow::new(text(cx, "settings.appearance", &[])).control(theme))
+            .row(
+                SettingsRow::new(text(cx, "settings.language", &[]))
+                    .description(text(cx, "settings.language.next", &[]))
+                    .control(language),
+            )
+            .row(SettingsRow::new(text(cx, "settings.motion", &[])).control(motion));
+        let updates = Switch::new("settings-updates", shared.check_updates)
+            .name(text(cx, "settings.updates", &[]))
+            .on_change(|on, _, cx| set(CHECK_UPDATES, Value::Bool(on), cx));
+        let mut section = section.row(
+            SettingsRow::new(text(cx, "settings.updates", &[]))
+                .description(text(cx, "settings.updates.hint", &[]))
+                .control(updates),
+        );
+        // Only where Omarchy is installed.
+        if ely_platform::omarchy_current_dir().is_some() {
+            let follow = Switch::new("settings-omarchy", shared.omarchy_sync)
+                .name(text(cx, "settings.omarchy", &[]))
+                .on_change(|on, _, cx| set(OMARCHY_SYNC, Value::Bool(on), cx));
+            section = section.row(SettingsRow::new(text(cx, "settings.omarchy", &[])).control(follow));
+        }
+        section
+    }
+
+    fn page(&self, this: gpui::WeakEntity<Self>, cx: &gpui::App) -> gpui::AnyElement {
+        match self.section.as_ref() {
+            "documents" => {
+                let autosave = Switch::new("settings-autosave", super::autosave::on(cx))
+                    .name(text(cx, "settings.autosave", &[]))
+                    .on_change(|on, _, cx| super::autosave::set(on, cx));
+                SettingsSection::new(text(cx, "settings.documents", &[]))
+                    .row(
+                        SettingsRow::new(text(cx, "settings.author", &[]))
+                            .description(text(cx, "settings.author.hint", &[]))
+                            .control(div().w_full().max_w_64().child(Input::new(&self.author))),
+                    )
+                    .row(
+                        SettingsRow::new(text(cx, "settings.autosave", &[]))
+                            .description(text(cx, "settings.autosave.hint", &[]))
+                            .control(autosave),
+                    )
+                    .into_any_element()
+            }
+            "git" => {
+                let field = self.git.clone().expect("the git section is ElyTree's");
+                let section = SettingsSection::new(text(cx, "settings.git", &[])).row(
+                    SettingsRow::new(text(cx, "settings.git.path", &[]))
+                        .description(text(cx, "settings.git.hint", &[]))
+                        .control(div().w_full().max_w_64().child(Input::new(&field).invalid(self.git_error.is_some()))),
+                );
+                match self.git_error.clone() {
+                    Some(error) => section.row(Banner::new("settings-git-error", Severity::Danger, error)),
+                    None => section,
+                }
+                .into_any_element()
+            }
+            "storage" => self.storage_page(this, cx),
+            "diagnostics" => self.diagnostics_page(this, cx),
+            _ => self.general(cx).into_any_element(),
+        }
+    }
+}
+
+/// A segmented choice that writes `key` when picked.
+fn choices<T: Copy + PartialEq + 'static>(
+    id: &'static str,
+    all: &'static [(T, &'static str)],
+    chosen: &T,
+    label: impl Fn(&T, &gpui::App) -> SharedString,
+    key: &'static str,
+    cx: &gpui::App,
+) -> SegmentedControl {
+    all.iter()
+        .fold(SegmentedControl::new(id, word(all, chosen)), |control, (choice, word)| {
+            control.segment(*word, label(choice, cx), None)
+        })
+        .on_change(move |picked, _, cx| set(key, Value::String(picked.to_string()), cx))
+}
+
+/// ElyTree's Git program; empty is its own.
+fn git_setting() -> std::io::Result<String> {
+    match Store::app(AppId::Tree)?.read()?.get(ely_platform::git::PROGRAM) {
+        None => Ok(String::new()),
+        Some(Value::String(path)) => Ok(path.clone()),
+        Some(other) => Err(std::io::Error::other(format!("settings: git cannot be {other}"))),
+    }
+}
+
+impl Render for SettingsView {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let sections = self.sections(cx);
+        let this = cx.entity().downgrade();
+        let page = self.page(this.clone(), cx);
+        let dialog = self.storage_dialog(this.clone(), cx);
+        let layout = SettingsLayout::new("settings", sections, self.section.clone(), move |key, _, cx| {
+            let key = key.clone();
+            this.update(cx, |this, cx| {
+                if key == "diagnostics" {
+                    this.read_diagnostics(cx);
+                }
+                if key == "storage" {
+                    this.read_storage(cx);
+                }
+                this.section = key;
+                cx.notify();
+            })
+            .ok();
+        })
+        .page(page);
+        let current = cx.global::<super::Current>();
+        let unreadable = current.error.clone().map(|error| {
+            Banner::new("settings-unreadable", Severity::Danger, text(cx, "settings.unreadable", &[("error", &error)]))
+        });
+        let app_error: Vec<_> = current
+            .app_error
+            .iter()
+            .map(|(kind, error)| {
+                let id = SharedString::from(format!("settings-app-unreadable-{kind}"));
+                Banner::new(id, Severity::Danger, text(cx, "settings.app_unreadable", &[("error", error)]))
+            })
+            .collect();
+        let unsaved: Vec<_> = current
+            .unsaved
+            .iter()
+            .map(|(kind, error)| {
+                Banner::new(SharedString::from(format!("settings-unsaved-{kind}")), Severity::Danger, text(cx, "settings.unsaved", &[("error", error)]))
+            })
+            .collect();
+        Shell::new(text(cx, "settings.title", &[]), &self.focus)
+            .secondary()
+            .child(div().size_full().p_6().flex().flex_col().gap_4().children(unreadable).children(app_error).children(unsaved).child(layout))
+            .children(dialog)
+    }
+}

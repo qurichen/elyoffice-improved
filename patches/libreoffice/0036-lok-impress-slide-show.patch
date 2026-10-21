@@ -1,0 +1,90 @@
+LOK: Impress reads every slide as a show plays it
+
+.uno:SlideShow lists each slide: hidden, notes as text, the transition
+and effects in the .uno:SlideTransition and .uno:SlideAnimations shapes,
+and its media with frames. .uno:SlideMedia entries carry their frame,
+x, y, width and height in 1/100 mm.
+
+diff --git a/sd/source/ui/unoidl/unomodel.cxx b/sd/source/ui/unoidl/unomodel.cxx
+index d8f1dee..035566a 100644
+--- a/sd/source/ui/unoidl/unomodel.cxx
++++ b/sd/source/ui/unoidl/unomodel.cxx
+@@ -2067,7 +2067,8 @@ bool SdXImpressDocument::supportsCommand(std::u16string_view rCommand)
+ {
+     return rCommand == u"SlideDesign" || rCommand == u"SlideObjects" || rCommand == u"Chart"
+            || rCommand == u"SlideNotes" || rCommand == u"SlideTransition"
+-           || rCommand == u"SlideAnimations" || rCommand == u"SlideMedia";
++           || rCommand == u"SlideAnimations" || rCommand == u"SlideMedia"
++           || rCommand == u"SlideShow";
+ }
+ 
+ namespace
+@@ -2226,12 +2227,12 @@ void lcl_SlideNotes(::tools::JsonWriter& rJson, SdDrawDocument& rDoc, sd::DrawVi
+     rJson.put("rich", pText && !sd::DrawViewShell::NotesLook(pText->GetTextObject(), rDoc.GetPool()));
+ }
+ 
+-/// The shown slide's media: list place, file, link.
+-void lcl_SlideMedia(::tools::JsonWriter& rJson, sd::DrawViewShell& rShell)
++/// A slide's media: list place, frame, file, link.
++void lcl_SlideMedia(::tools::JsonWriter& rJson, SdPage& rPage)
+ {
+     sal_Int64 nAt = 0;
+     auto aList = rJson.startArray("media");
+-    for (const rtl::Reference<SdrObject>& pObj : *rShell.GetActualPage())
++    for (const rtl::Reference<SdrObject>& pObj : rPage)
+     {
+         if (pObj->isAnnotationObject())
+             continue;
+@@ -2249,11 +2250,38 @@ void lcl_SlideMedia(::tools::JsonWriter& rJson, sd::DrawViewShell& rShell)
+             rJson.put("file", aFile);
+             rJson.put("missing", aFile.isEmpty() || osl::DirectoryItem::get(aFile, aItem) != osl::FileBase::E_None);
+             rJson.put("loop", rItem.isLoop());
++            const ::tools::Rectangle& rRect = pMedia->GetLogicRect();
++            rJson.put("x", sal_Int64(rRect.Left()));
++            rJson.put("y", sal_Int64(rRect.Top()));
++            rJson.put("width", sal_Int64(rRect.GetWidth()));
++            rJson.put("height", sal_Int64(rRect.GetHeight()));
+         }
+         ++nAt;
+     }
+ }
+ 
++/// Each slide for a show: hidden, notes, motion, media.
++void lcl_SlideShow(::tools::JsonWriter& rJson, SdDrawDocument& rDoc)
++{
++    auto aList = rJson.startArray("slides");
++    for (sal_uInt16 i = 0; i < rDoc.GetSdPageCount(PageKind::Standard); ++i)
++    {
++        SdPage* pPage = rDoc.GetSdPage(i, PageKind::Standard);
++        SdPage* pNotes = rDoc.GetSdPage(i, PageKind::Notes);
++        auto pObj = pNotes ? dynamic_cast<SdrTextObj*>(pNotes->GetPresObj(PresObjKind::Notes)) : nullptr;
++        const OutlinerParaObject* pText = pObj && !pObj->IsEmptyPresObj() ? pObj->GetOutlinerParaObject() : nullptr;
++        auto aOne = rJson.startStruct();
++        rJson.put("hidden", pPage->IsExcluded());
++        rJson.put("notes", pText ? pText->GetTextObject().GetText(LINEEND_LF) : OUString());
++        {
++            auto aTransition = rJson.startNode("transition");
++            DrawViewShell::WriteKitTransition(rJson, *pPage);
++        }
++        DrawViewShell::WriteKitAnimations(rJson, *pPage);
++        lcl_SlideMedia(rJson, *pPage);
++    }
++}
++
+ /// The shown slide's objects, selection, guides and snapping.
+ void lcl_SlideObjects(::tools::JsonWriter& rJson, sd::DrawViewShell& rShell)
+ {
+@@ -2325,7 +2353,12 @@ void SdXImpressDocument::getCommandValues(::tools::JsonWriter& rJsonWriter, std:
+     if (rCommand == ".uno:SlideMedia")
+     {
+         if (DrawViewShell* pShell = GetViewShell())
+-            lcl_SlideMedia(rJsonWriter, *pShell);
++            lcl_SlideMedia(rJsonWriter, *pShell->GetActualPage());
++        return;
++    }
++    if (rCommand == ".uno:SlideShow")
++    {
++        lcl_SlideShow(rJsonWriter, *mpDoc);
+         return;
+     }
+     if (rCommand == ".uno:SlideTransition" || rCommand == ".uno:SlideAnimations")

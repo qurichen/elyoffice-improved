@@ -1,0 +1,75 @@
+/* The speaker shows on intent and stays while it plays. */
+.stage .block.speaker {
+  animation: none;
+  opacity: 0;
+  transition: opacity 0.2s ease-out;
+}
+
+.model:has(.stage:hover, .speaker-button:hover) .speaker,
+.model:focus-within .speaker,
+.model.playing .speaker {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .stage .block.speaker {
+    opacity: 1;
+  }
+}
+
+.speaker-button {
+  position: absolute;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+
+.speaker-button:focus-visible {
+  outline: 2px solid #3d7fe5;
+  outline-offset: 4px;
+}
+
+.speaker-button span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Buildings hop by their faces; translate stays touch's. */
+.dance > .face {
+  transform: translateY(var(--hop, 0px));
+}
+
+.pulse {
+  fill: color-mix(in oklab, var(--ink), white 60%);
+}
+
+/* The desk cell under the pointer rises a little. */
+.stage .block.tile {
+  animation: none;
+  translate: 0 -6px;
+  transition: translate 0.12s ease-out;
+}
+
+@starting-style {
+  .stage .block.tile {
+    translate: 0 0;
+  }
+}
+
+/* Still, the woofer stays pushed out while it plays. */
+@media (prefers-reduced-motion: reduce) {
+  .stage .block.speaker,
+  .stage .block.tile {
+    transition: none;
+  }
+
+  .model.playing .woofer {
+    translate: -4.85px 2.8px;
+  }
+}

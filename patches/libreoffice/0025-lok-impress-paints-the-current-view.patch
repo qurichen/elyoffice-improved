@@ -1,0 +1,26 @@
+LOK: Impress paints and types into the current view
+
+SdXImpressDocument::GetViewShell asked the doc shell for its connected
+view. Impress disconnects it whenever the shell stack reshuffles
+(ViewShellManager::MoveToTop), so a LOK request landing in that gap found
+no view: the tile came back blank (black on macOS) and keys were dropped.
+Under LOK take the main shell of the current view instead.
+
+diff --git a/sd/source/ui/unoidl/unomodel.cxx b/sd/source/ui/unoidl/unomodel.cxx
+index f47b443..aa4d8de 100644
+--- a/sd/source/ui/unoidl/unomodel.cxx
++++ b/sd/source/ui/unoidl/unomodel.cxx
+@@ -3869,7 +3869,12 @@ DrawViewShell* SdXImpressDocument::GetViewShell()
+         return nullptr;
+     }
+ 
+-    DrawViewShell* pViewSh = dynamic_cast<DrawViewShell*>(mpDocShell->GetViewShell());
++    // The doc shell drops its view while shells reshuffle.
++    ViewShellBase* pBase = comphelper::LibreOfficeKit::isActive()
++        ? dynamic_cast<ViewShellBase*>(SfxViewShell::Current()) : nullptr;
++    DrawViewShell* pViewSh = pBase && pBase->GetDocShell() == mpDocShell
++        ? dynamic_cast<DrawViewShell*>(pBase->GetMainViewShell().get())
++        : dynamic_cast<DrawViewShell*>(mpDocShell->GetViewShell());
+     if (!pViewSh)
+     {
+         SAL_WARN("sd", "DrawViewShell not available!");

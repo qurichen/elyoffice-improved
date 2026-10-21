@@ -1,0 +1,31 @@
+[package]
+name = "ely-table"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+build = "../../packaging/windows/icon.rs"
+
+[build-dependencies]
+embed-resource.workspace = true
+
+[dependencies]
+encoding_rs.workspace = true
+ely-gpui-component.workspace = true
+serde_json.workspace = true
+ely-lok = { workspace = true, features = ["view"] }
+ely-office.workspace = true
+gpui.workspace = true
+log.workspace = true
+ely-platform.workspace = true
+ely-ui.workspace = true
+
+[dev-dependencies]
+ely-ui = { workspace = true, features = ["test-support"] }
+ely-gpui-component = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

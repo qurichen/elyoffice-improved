@@ -1,0 +1,234 @@
+diff --git a/sc/sdi/scalc.sdi b/sc/sdi/scalc.sdi
+index 7be957b89..e49325020 100644
+--- a/sc/sdi/scalc.sdi
++++ b/sc/sdi/scalc.sdi
+@@ -735,7 +735,7 @@ SfxVoidItem ConditionalFormatConditionMenu SID_POPUP_EASY_CONDITIONAL_FORMAT
+ ]
+ 
+ SfxVoidItem ConditionalFormatEasy SID_EASY_CONDITIONAL_FORMAT_DIALOG
+-(SfxInt16Item FormatRule FN_PARAM_1)
++(SfxInt16Item FormatRule FN_PARAM_1,SfxStringItem Rule FN_PARAM_2)
+ [
+     AutoUpdate = FALSE,
+     FastCall = FALSE,
+@@ -1106,7 +1106,7 @@ SfxVoidItem DataFilterSpecialFilter SID_SPECIAL_FILTER
+ 
+ 
+ SfxVoidItem DataFilterStandardFilter SID_FILTER
+-()
++(SfxStringItem Query FN_PARAM_1)
+ [
+     AutoUpdate = FALSE,
+     FastCall = FALSE,
+@@ -3852,6 +3852,7 @@ SfxVoidItem DeleteNote SID_DELETE_NOTE
+ 
+ 
+ SfxStringItem NumberFormat SID_NUMBER_FORMAT
++(SfxStringItem NumberFormat SID_NUMBER_FORMAT,SfxStringItem FormatCode FN_PARAM_1)
+ 
+ [
+     AutoUpdate = FALSE,
+@@ -5736,7 +5737,7 @@ SfxVoidItem AssignMacro SID_ASSIGNMACRO
+ 
+ 
+ SfxVoidItem TextToColumns SID_TEXT_TO_COLUMNS
+-()
++(SfxStringItem Options FN_PARAM_1)
+ [
+     AutoUpdate = FALSE,
+     FastCall = FALSE,
+@@ -5958,7 +5959,7 @@ SfxVoidItem UpdateTableLinks SID_UPDATETABLINKS
+ 
+ 
+ SfxVoidItem Validation FID_VALIDATION
+-()
++(SfxStringItem Rule FN_PARAM_1)
+ [
+     AutoUpdate = FALSE,
+     FastCall = FALSE,
+diff --git a/sc/sdi/cellsh.sdi b/sc/sdi/cellsh.sdi
+index 0f16536d1..005e4a2f6 100644
+--- a/sc/sdi/cellsh.sdi
++++ b/sc/sdi/cellsh.sdi
+@@ -220,7 +220,8 @@ interface CellSelection
+     SID_POPUP_EASY_CONDITIONAL_FORMAT   []
+     SfxVoidItem ConditionalFormatEasy SID_EASY_CONDITIONAL_FORMAT_DIALOG
+     (
+-        SfxInt16Item FormatRule FN_PARAM_1
++        SfxInt16Item FormatRule FN_PARAM_1,
++        SfxStringItem Rule FN_PARAM_2
+     )
+     [
+         ExecMethod = Execute;
+diff --git a/sc/source/ui/view/formatsh.cxx b/sc/source/ui/view/formatsh.cxx
+index e395b01d2..e2a6202d8 100644
+--- a/sc/source/ui/view/formatsh.cxx
++++ b/sc/source/ui/view/formatsh.cxx
+@@ -410,6 +410,14 @@ void ScFormatShell::ExecuteNumFormat( SfxRequest& rReq )
+             // symphony version with format interpretation
+             if(pReqArgs)
+             {
++                // A format code as is, from the kit client.
++                const SfxPoolItem* pCode = nullptr;
++                if (pReqArgs->GetItemState(FN_PARAM_1, true, &pCode) == SfxItemState::SET)
++                {
++                    pTabViewShell->SetNumFmtByStr(static_cast<const SfxStringItem*>(pCode)->GetValue());
++                    rReq.Done();
++                    break;
++                }
+                 const SfxPoolItem* pItem;
+                 ScDocument& rDoc = rViewData.GetDocument();
+                 SvNumberFormatter* pFormatter = rDoc.GetFormatTable();
+diff --git a/sc/source/ui/view/cellsh3.cxx b/sc/source/ui/view/cellsh3.cxx
+index a758333f7..32c4f3fef 100644
+--- a/sc/source/ui/view/cellsh3.cxx
++++ b/sc/source/ui/view/cellsh3.cxx
+@@ -50,6 +50,13 @@
+ #include <LibreOfficeKit/LibreOfficeKitEnums.h>
+ #include <inputwin.hxx>
+ #include <officecfg/Office/Calc.hxx>
++#include <colorscale.hxx>
++#include <stlpool.hxx>
++#include <conditio.hxx>
++#include <docfunc.hxx>
++#include <docsh.hxx>
++#include <rangelst.hxx>
++#include <boost/property_tree/json_parser.hpp>
+ 
+ #include <memory>
+ 
+@@ -152,6 +159,118 @@ void lcl_lokGetWholeFunctionList()
+ 
+ } // end namespace
+ 
++
++namespace
++{
++/// A "#RRGGBB" text as a color.
++Color lcl_Color(const std::string& rText)
++{
++    return Color(ColorTransparency, OUString::fromUtf8(rText).copy(1).toUInt32(16));
++}
++
++/// Adds or removes the conditional format a kit client describes.
++bool lcl_ConditionalFormat(ScViewData& rData, const OUString& rRule)
++{
++    boost::property_tree::ptree aRule;
++    std::stringstream aStream{ std::string(rRule.toUtf8()) };
++    try
++    {
++        boost::property_tree::read_json(aStream, aRule);
++    }
++    catch (const boost::property_tree::json_parser_error&)
++    {
++        return false;
++    }
++    ScDocument& rDoc = rData.GetDocument();
++    ScDocFunc& rFunc = rData.GetDocShell()->GetDocFunc();
++    const SCTAB nTab = rData.CurrentTabForData();
++    if (const auto oKey = aRule.get_optional<sal_uInt32>("remove"))
++    {
++        ScConditionalFormatList* pList = rDoc.GetCondFormList(nTab);
++        ScConditionalFormat* pOld = pList ? pList->GetFormat(*oKey) : nullptr;
++        if (!pOld)
++            return false;
++        const ScRangeList aOldRange = pOld->GetRange();
++        rFunc.ReplaceConditionalFormat(*oKey, nullptr, nTab, aOldRange);
++        return true;
++    }
++    ScRangeList aRanges;
++    ScMarkData aMark(rData.GetMarkData());
++    aMark.MarkToMulti();
++    aMark.FillRangeListWithMarks(&aRanges, false, nTab);
++    if (aRanges.empty())
++        aRanges.push_back(ScRange(rData.GetCurX(), rData.GetCurY(), nTab));
++    const ScAddress aPos = aRanges.GetTopLeftCorner();
++    auto pFormat = std::make_unique<ScConditionalFormat>(0, rDoc);
++    const std::string aKind = aRule.get<std::string>("kind", "");
++    if (aKind == "cell")
++    {
++        static const std::pair<std::string_view, ScConditionMode> aModes[]
++            = { { "equal", ScConditionMode::Equal },
++                { "notequal", ScConditionMode::NotEqual },
++                { "less", ScConditionMode::Less },
++                { "lessequal", ScConditionMode::EqLess },
++                { "greater", ScConditionMode::Greater },
++                { "greaterequal", ScConditionMode::EqGreater },
++                { "between", ScConditionMode::Between },
++                { "notbetween", ScConditionMode::NotBetween },
++                { "duplicate", ScConditionMode::Duplicate },
++                { "unique", ScConditionMode::NotDuplicate },
++                { "top10", ScConditionMode::Top10 },
++                { "bottom10", ScConditionMode::Bottom10 },
++                { "aboveaverage", ScConditionMode::AboveAverage },
++                { "belowaverage", ScConditionMode::BelowAverage },
++                { "error", ScConditionMode::Error },
++                { "contains", ScConditionMode::ContainsText },
++                { "beginswith", ScConditionMode::BeginsWith },
++                { "endswith", ScConditionMode::EndsWith } };
++        const std::string aOp = aRule.get<std::string>("operator", "");
++        const auto pMode = std::find_if(std::begin(aModes), std::end(aModes),
++                                        [&aOp](const auto& rPair) { return rPair.first == aOp; });
++        const OUString aStyle = OUString::fromUtf8(aRule.get<std::string>("style", ""));
++        if (pMode == std::end(aModes) || !rDoc.GetStyleSheetPool()->Find(aStyle, SfxStyleFamily::Para))
++            return false;
++        OUString aExpr1 = OUString::fromUtf8(aRule.get<std::string>("value1", ""));
++        OUString aExpr2 = OUString::fromUtf8(aRule.get<std::string>("value2", ""));
++        // Text conditions compare strings, as the dialog does.
++        if (pMode->second == ScConditionMode::ContainsText || pMode->second == ScConditionMode::BeginsWith
++            || pMode->second == ScConditionMode::EndsWith)
++            aExpr1 = "\"" + aExpr1.replaceAll("\"", "\"\"") + "\"";
++        pFormat->AddEntry(new ScCondFormatEntry(pMode->second, aExpr1, aExpr2, rDoc, aPos, aStyle));
++    }
++    else if (aKind == "scale")
++    {
++        std::vector<Color> aColors;
++        if (const auto oColors = aRule.get_child_optional("colors"))
++            for (const auto& rColor : *oColors)
++                aColors.push_back(lcl_Color(rColor.second.data()));
++        if (aColors.size() != 2 && aColors.size() != 3)
++            return false;
++        auto* pScale = new ScColorScaleFormat(rDoc);
++        pScale->AddEntry(new ScColorScaleEntry(0, aColors.front(), COLORSCALE_MIN));
++        if (aColors.size() == 3)
++            pScale->AddEntry(new ScColorScaleEntry(50, aColors[1], COLORSCALE_PERCENTILE));
++        pScale->AddEntry(new ScColorScaleEntry(0, aColors.back(), COLORSCALE_MAX));
++        pFormat->AddEntry(pScale);
++    }
++    else if (aKind == "databar")
++    {
++        auto* pBar = new ScDataBarFormat(rDoc);
++        auto* pData = new ScDataBarFormatData();
++        pData->maPositiveColor = lcl_Color(aRule.get<std::string>("color", "#638EC6"));
++        pData->mpLowerLimit.reset(new ScColorScaleEntry(0, COL_BLACK, COLORSCALE_AUTO));
++        pData->mpUpperLimit.reset(new ScColorScaleEntry(0, COL_BLACK, COLORSCALE_AUTO));
++        pBar->SetDataBarData(pData);
++        pFormat->AddEntry(pBar);
++    }
++    else
++        return false;
++    pFormat->SetRange(aRanges);
++    rFunc.ReplaceConditionalFormat(0, std::move(pFormat), nTab, aRanges);
++    return true;
++}
++}
++
+ void ScCellShell::Execute( SfxRequest& rReq )
+ {
+     ScTabViewShell* pTabViewShell   = GetViewData().GetViewShell();
+@@ -447,7 +566,14 @@ void ScCellShell::Execute( SfxRequest& rReq )
+ 
+         case SID_EASY_CONDITIONAL_FORMAT_DIALOG:
+             {
+-                if (pReqArgs != nullptr)
++                const SfxPoolItem* pRule = nullptr;
++                if (pReqArgs && pReqArgs->GetItemState(FN_PARAM_2, true, &pRule) == SfxItemState::SET)
++                {
++                    // The kit client's rule; no dialog.
++                    if (lcl_ConditionalFormat(GetViewData(), static_cast<const SfxStringItem*>(pRule)->GetValue()))
++                        rReq.Done();
++                }
++                else if (pReqArgs != nullptr)
+                 {
+                     const SfxPoolItem* pFormat;
+                     if (pReqArgs->HasItem( FN_PARAM_1, &pFormat))

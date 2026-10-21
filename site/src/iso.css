@@ -1,0 +1,75 @@
+/* One colour, three tones; no shadows. */
+.block {
+  --ink: var(--tone);
+}
+
+/* At night a block takes its dark tone. */
+:root[data-theme="dark"] .block {
+  --ink: var(--tone-dark, var(--tone));
+}
+
+.face.top {
+  fill: var(--ink);
+}
+
+.face.left,
+.face.outline {
+  fill: color-mix(in oklab, var(--ink), black 9%);
+}
+
+.face.right {
+  fill: color-mix(in oklab, var(--ink), black 20%);
+}
+
+/* Each block drops one step and lands on its beat. */
+.grow .block {
+  animation: land 0.2s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+  animation-delay: calc(var(--land) - 0.2s);
+}
+
+@keyframes land {
+  from {
+    transform: translateY(-28px);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grow .block {
+    animation: none;
+  }
+}
+
+/* Interaction moves by translate; landing owns transform. */
+.block {
+  transition: translate 0.15s ease-out;
+}
+
+.hit-face {
+  fill: none;
+  pointer-events: all;
+  cursor: pointer;
+}
+
+.hit-face.ground {
+  cursor: auto;
+}
+
+.block.lifted {
+  translate: 0 calc(-1 * var(--step));
+}
+
+.block.lifted.pressed {
+  translate: 0 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .block {
+    transition: none;
+  }
+}
+
+/* Off-screen models wait until they scroll near. */
+.grow:not(.seen) .block {
+  animation-play-state: paused;
+}

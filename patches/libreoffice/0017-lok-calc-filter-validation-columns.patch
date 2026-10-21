@@ -1,0 +1,298 @@
+diff --git a/sc/source/ui/view/cellsh2.cxx b/sc/source/ui/view/cellsh2.cxx
+index 57a40c6d0..5dd6e0793 100644
+--- a/sc/source/ui/view/cellsh2.cxx
++++ b/sc/source/ui/view/cellsh2.cxx
+@@ -63,6 +63,12 @@
+ #include <datastreamdlg.hxx>
+ #include <dataproviderdlg.hxx>
+ #include <queryentry.hxx>
++#include <filterentries.hxx>
++#include <svl/sharedstringpool.hxx>
++#include <compiler.hxx>
++#include <rtl/math.hxx>
++#include <boost/property_tree/json_parser.hpp>
++#include <com/sun/star/sheet/TableValidationVisibility.hpp>
+ #include <markdata.hxx>
+ #include <documentlinkmgr.hxx>
+ #include <officecfg/Office/Common.hxx>
+@@ -225,6 +231,226 @@ namespace
+     };
+ }
+ 
++
++namespace
++{
++/// The JSON argument `nWhich` of `rReq`, read into `rTree`.
++bool lcl_JsonArg(const SfxRequest& rReq, sal_uInt16 nWhich, boost::property_tree::ptree& rTree)
++{
++    const SfxItemSet* pArgs = rReq.GetArgs();
++    const SfxPoolItem* pItem = nullptr;
++    if (!pArgs || pArgs->GetItemState(nWhich, true, &pItem) != SfxItemState::SET)
++        return false;
++    std::stringstream aStream(
++        std::string(static_cast<const SfxStringItem*>(pItem)->GetValue().toUtf8()));
++    try
++    {
++        boost::property_tree::read_json(aStream, rTree);
++    }
++    catch (const boost::property_tree::json_parser_error&)
++    {
++        return false;
++    }
++    return true;
++}
++
++OUString lcl_Text(const boost::property_tree::ptree& rTree, const char* pKey)
++{
++    return OUString::fromUtf8(rTree.get<std::string>(pKey, ""));
++}
++
++/// A typed date or time, as the dialog stores it.
++OUString lcl_Moment(ScDocument& rDoc, const OUString& rText)
++{
++    sal_uInt32 nIndex = 0;
++    double fValue;
++    if (!rDoc.GetFormatTable()->IsNumberFormat(rText, nIndex, fValue))
++        return rText;
++    return rtl::math::doubleToUString(fValue, rtl_math_StringFormat_Automatic,
++                                      rtl_math_DecimalPlaces_Max,
++                                      ScGlobal::getLocaleData().getNumDecimalSep()[0], true);
++}
++
++/// Sets the validation a kit client describes on the selection.
++bool lcl_SetValidation(ScTabViewShell& rView, ScViewData& rData,
++                       const boost::property_tree::ptree& rRule)
++{
++    static const std::pair<std::string_view, ScValidationMode> aModes[]
++        = { { "any", SC_VALID_ANY },          { "whole", SC_VALID_WHOLE },
++            { "decimal", SC_VALID_DECIMAL },  { "date", SC_VALID_DATE },
++            { "time", SC_VALID_TIME },        { "textlength", SC_VALID_TEXTLEN },
++            { "list", SC_VALID_LIST },        { "custom", SC_VALID_CUSTOM } };
++    static const std::pair<std::string_view, ScConditionMode> aOperators[]
++        = { { "equal", ScConditionMode::Equal },
++            { "notequal", ScConditionMode::NotEqual },
++            { "less", ScConditionMode::Less },
++            { "lessequal", ScConditionMode::EqLess },
++            { "greater", ScConditionMode::Greater },
++            { "greaterequal", ScConditionMode::EqGreater },
++            { "between", ScConditionMode::Between },
++            { "notbetween", ScConditionMode::NotBetween } };
++    static const std::pair<std::string_view, ScValidErrorStyle> aStyles[]
++        = { { "stop", SC_VALERR_STOP },
++            { "warning", SC_VALERR_WARNING },
++            { "info", SC_VALERR_INFO } };
++    auto find = [](const auto& rTable, const std::string& rKey) {
++        return std::find_if(std::begin(rTable), std::end(rTable),
++                            [&rKey](const auto& rPair) { return rPair.first == rKey; });
++    };
++    const auto pMode = find(aModes, rRule.get<std::string>("type", "any"));
++    const auto pOperator = find(aOperators, rRule.get<std::string>("operator", "equal"));
++    const auto pStyle = find(aStyles, rRule.get<std::string>("errorStyle", "stop"));
++    if (pMode == std::end(aModes) || pOperator == std::end(aOperators)
++        || pStyle == std::end(aStyles))
++        return false;
++    ScDocument& rDoc = rData.GetDocument();
++    OUString aExpr1 = lcl_Text(rRule, "value1");
++    OUString aExpr2 = lcl_Text(rRule, "value2");
++    if (pMode->second == SC_VALID_DATE || pMode->second == SC_VALID_TIME)
++    {
++        aExpr1 = lcl_Moment(rDoc, aExpr1);
++        aExpr2 = lcl_Moment(rDoc, aExpr2);
++    }
++    if (const auto oList = rRule.get_child_optional("list"); oList && !oList->empty())
++    {
++        // Entries as the dialog writes them: quoted, separated.
++        OUStringBuffer aList;
++        for (const auto& rEntry : *oList)
++        {
++            if (!aList.isEmpty())
++                aList.append(ScCompiler::GetNativeSymbol(ocSep));
++            aList.append("\"" + OUString::fromUtf8(rEntry.second.data()).replaceAll("\"", "\"\"")
++                         + "\"");
++        }
++        aExpr1 = aList.makeStringAndClear();
++    }
++    const ScAddress aPos(rData.GetCurX(), rData.GetCurY(), rData.CurrentTabForData());
++    ScValidationData aData(pMode->second, pOperator->second, aExpr1, aExpr2, rDoc, aPos);
++    aData.SetIgnoreBlank(rRule.get<bool>("ignoreBlank", true));
++    aData.SetListType(rRule.get<bool>("dropdown", true)
++                          ? css::sheet::TableValidationVisibility::UNSORTED
++                          : css::sheet::TableValidationVisibility::INVISIBLE);
++    aData.SetInput(lcl_Text(rRule, "inputTitle"), lcl_Text(rRule, "inputMessage"));
++    if (!rRule.get<bool>("showInput", false))
++        aData.ResetInput();
++    aData.SetError(lcl_Text(rRule, "errorTitle"), lcl_Text(rRule, "errorMessage"),
++                   pStyle->second);
++    if (!rRule.get<bool>("showError", false))
++        aData.ResetError();
++    rView.SetValidation(aData);
++    return true;
++}
++
++/// One query item from a value typed as text.
++void lcl_SetItem(ScDocument& rDoc, ScQueryEntry::Item& rItem, const OUString& rText)
++{
++    sal_uInt32 nIndex = 0;
++    double fValue;
++    rItem.maString = rDoc.GetSharedStringPool().intern(rText);
++    rItem.meType = rDoc.GetFormatTable()->IsNumberFormat(rText, nIndex, fValue)
++                       ? ScQueryEntry::ByValue
++                       : ScQueryEntry::ByString;
++    rItem.mfVal = rItem.meType == ScQueryEntry::ByValue ? fValue : 0.0;
++}
++
++/// Filters the cursor's data by a kit client's conditions.
++bool lcl_Query(ScTabViewShell& rView, ScViewData& rData, const boost::property_tree::ptree& rQuery)
++{
++    ScDBData* pDBData = rView.GetDBData();
++    if (!pDBData)
++        return false;
++    ScDocument& rDoc = rData.GetDocument();
++    ScQueryParam aParam;
++    pDBData->GetQueryParam(aParam);
++    // With a column, only that column's conditions change.
++    const auto oColumn = rQuery.get_optional<SCCOLROW>("column");
++    if (oColumn)
++        aParam.RemoveAllEntriesByField(*oColumn);
++    else
++        for (SCSIZE i = 0; i < aParam.GetEntryCount(); ++i)
++            aParam.GetEntry(i).Clear();
++    aParam.bHasHeader = pDBData->HasHeader();
++    aParam.bInplace = true;
++    aParam.bDuplicate = true;
++    aParam.bCaseSens = false;
++    aParam.eSearchType = utl::SearchParam::SearchType::Normal;
++    const auto oConditions = rQuery.get_child_optional("conditions");
++    if (oConditions)
++    {
++        for (const auto& rPair : *oConditions)
++        {
++            const boost::property_tree::ptree& rCondition = rPair.second;
++            const SCCOLROW nField = oColumn ? *oColumn : rCondition.get<SCCOLROW>("field", -1);
++            if (nField < aParam.nCol1 || nField > aParam.nCol2)
++                return false;
++            ScQueryEntry* pEntry = nullptr;
++            for (SCSIZE i = 0; i < aParam.GetEntryCount() && !pEntry; ++i)
++                if (!aParam.GetEntry(i).bDoQuery)
++                    pEntry = &aParam.GetEntry(i);
++            if (!pEntry)
++                pEntry = &aParam.AppendEntry();
++            pEntry->bDoQuery = true;
++            pEntry->nField = nField;
++            pEntry->eConnect = rCondition.get<bool>("or", false) ? SC_OR : SC_AND;
++            const std::string aOp = rCondition.get<std::string>("op", "");
++            const OUString aValue = lcl_Text(rCondition, "value");
++            if (aOp == "empty")
++                pEntry->SetQueryByEmpty();
++            else if (aOp == "notempty")
++                pEntry->SetQueryByNonEmpty();
++            else if (aOp == "values")
++            {
++                // The column's own entries, so types match.
++                std::set<OUString> aWanted;
++                if (const auto oValues = rCondition.get_child_optional("values"))
++                    for (const auto& rValue : *oValues)
++                        aWanted.insert(OUString::fromUtf8(rValue.second.data()));
++                ScFilterEntries aEntries;
++                rDoc.GetFilterEntries(nField, aParam.nRow1, rData.CurrentTabForData(), aEntries);
++                pEntry->eOp = SC_EQUAL;
++                ScQueryEntry::QueryItemsType& rItems = pEntry->GetQueryItems();
++                rItems.clear();
++                for (const ScTypedStrData& rStr : aEntries)
++                {
++                    if (!aWanted.count(rStr.GetString()))
++                        continue;
++                    ScQueryEntry::Item aItem;
++                    aItem.maString = rDoc.GetSharedStringPool().intern(rStr.GetString());
++                    aItem.meType = rStr.IsDate() ? ScQueryEntry::ByDate
++                                   : rStr.GetStringType() == ScTypedStrData::Value
++                                       ? ScQueryEntry::ByValue
++                                       : ScQueryEntry::ByString;
++                    aItem.mfVal = rStr.GetValue();
++                    rItems.push_back(aItem);
++                }
++                if (aWanted.count(OUString()))
++                {
++                    ScQueryEntry::Item aEmpty;
++                    aEmpty.maString = rDoc.GetSharedStringPool().intern(OUString());
++                    rItems.push_back(aEmpty);
++                }
++            }
++            else
++            {
++                static const std::pair<std::string_view, ScQueryOp> aOps[]
++                    = { { "contains", SC_CONTAINS }, { "equals", SC_EQUAL },
++                        { "notequals", SC_NOT_EQUAL }, { "greater", SC_GREATER },
++                        { "less", SC_LESS }, { "greaterequal", SC_GREATER_EQUAL },
++                        { "lessequal", SC_LESS_EQUAL } };
++                const auto pOp = std::find_if(std::begin(aOps), std::end(aOps),
++                                              [&aOp](const auto& rPair) { return rPair.first == aOp; });
++                if (pOp == std::end(aOps))
++                    return false;
++                pEntry->eOp = pOp->second;
++                lcl_SetItem(rDoc, pEntry->GetQueryItem(), aValue);
++            }
++        }
++    }
++    rView.Query(aParam, nullptr, true);
++    return true;
++}
++}
++
+ void ScCellShell::ExecuteDB( SfxRequest& rReq )
+ {
+     ScTabViewShell* pTabViewShell   = GetViewData().GetViewShell();
+@@ -614,7 +840,13 @@ void ScCellShell::ExecuteDB( SfxRequest& rReq )
+         case SID_FILTER:
+             {
+                 const SfxItemSet* pArgs = rReq.GetArgs();
+-                if ( pArgs )
++                boost::property_tree::ptree aQuery;
++                if (lcl_JsonArg(rReq, FN_PARAM_1, aQuery))
++                {
++                    if (lcl_Query(*pTabViewShell, GetViewData(), aQuery))
++                        rReq.Done();
++                }
++                else if ( pArgs )
+                 {
+                     OSL_FAIL("SID_FILTER with arguments?");
+                     pTabViewShell->Query(
+@@ -868,7 +1100,10 @@ void ScCellShell::ExecuteDB( SfxRequest& rReq )
+                 const SfxItemSet* pArgs = rReq.GetArgs();
+                 if ( pArgs )
+                 {
+-                    OSL_FAIL("later...");
++                    boost::property_tree::ptree aRule;
++                    if (lcl_JsonArg(rReq, FN_PARAM_1, aRule)
++                        && lcl_SetValidation(*pTabViewShell, GetViewData(), aRule))
++                        rReq.Done();
+                 }
+                 else
+                 {
+@@ -1098,6 +1333,26 @@ void ScCellShell::ExecuteDB( SfxRequest& rReq )
+                     aExport.ExportStream( aStream, OUString(), SotClipboardFormatId::STRING );
+ 
+                     aStream.Seek(0);
++                    const SfxPoolItem* pOptions = nullptr;
++                    if (pReqArgs
++                        && pReqArgs->GetItemState(FN_PARAM_1, true, &pOptions) == SfxItemState::SET)
++                    {
++                        // The kit client's options; no dialog.
++                        ScAsciiOptions aOptions;
++                        aOptions.ReadFromString(static_cast<const SfxStringItem*>(pOptions)->GetValue());
++                        ScDocShell* pDocSh = rData.GetDocShell();
++                        OUString aUndo = ScResId( STR_UNDO_TEXTTOCOLUMNS );
++                        pDocSh->GetUndoManager()->EnterListAction( aUndo, aUndo, 0, rData.GetViewShell()->GetViewShellId() );
++                        ScImportExport aImport( rDoc, aRange.aStart );
++                        aImport.SetExtOptions( aOptions );
++                        aImport.SetApi( false );
++                        aImport.SetImportBroadcast( true );
++                        aImport.SetOverwriting( true );
++                        aImport.ImportStream( aStream, OUString(), SotClipboardFormatId::STRING );
++                        pDocSh->GetUndoManager()->LeaveListAction();
++                        rReq.Done();
++                        break;
++                    }
+                     ScAbstractDialogFactory* pFact = ScAbstractDialogFactory::Create();
+                     ScopedVclPtr<AbstractScImportAsciiDlg> pDlg(pFact->CreateScImportAsciiDlg(
+                             pTabViewShell->GetFrameWeld(), OUString(), &aStream, SC_TEXTTOCOLUMNS));

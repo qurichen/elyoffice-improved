@@ -1,0 +1,396 @@
+LOK: Impress charts, notes and comments without dialogs
+
+- .uno:InsertObjectChart takes Chart (look and data as JSON): it inserts
+  a chart at the slide centre with no chart UI, or, with one chart
+  marked, changes that chart on a copy that replaces it (one undo step).
+  A look or table that does not parse is refused. The look goes in
+  before the data, so the data sees the chart's type.
+- .uno:Chart reads the marked chart's name, look and data.
+- .uno:SlideNotes (new) sets slide Part's notes as plain text in one
+  undo step. Text with one look throughout, paragraph and character
+  (PowerPoint sets the full look on every run), keeps it; text whose
+  look varies is refused, as plain text would lose it. Its read gives
+  the shown slide's index, the text and whether the look varies
+  ("rich").
+- Comments read with their slide's index.
+- A new comment or reply takes the user's name when the view has no
+  author (a kit client sets the name with setOption("author")); it was
+  left blank.
+
+diff --git a/sd/inc/app.hrc b/sd/inc/app.hrc
+index d63a4d3..1944bbe 100644
+--- a/sd/inc/app.hrc
++++ b/sd/inc/app.hrc
+@@ -426,5 +426,6 @@
+ #define SID_ALIGN_PAGE                      (SID_SD_START+451)
+ 
+ #define FN_TRANSFORM_DOCUMENT_STRUCTURE     (SID_SD_START+452)
++#define SID_SLIDE_NOTES                     (SID_SD_START+453)
+ 
+ /* vim:set shiftwidth=4 softtabstop=4 expandtab: */
+diff --git a/sd/sdi/_drvwsh.sdi b/sd/sdi/_drvwsh.sdi
+index c574c2c..cf3acd6 100644
+--- a/sd/sdi/_drvwsh.sdi
++++ b/sd/sdi/_drvwsh.sdi
+@@ -3033,6 +3033,11 @@ interface DrawView
+         ExecMethod = FuTemporary ;
+         StateMethod = GetMenuState;
+     ]
++    SID_SLIDE_NOTES
++    [
++        ExecMethod = FuTemporary ;
++        StateMethod = GetMenuState;
++    ]
+     SID_COPY_SLIDE
+     [
+         ExecMethod = FuTemporary ;
+diff --git a/sd/sdi/sdraw.sdi b/sd/sdi/sdraw.sdi
+index ccc665d..728b670 100644
+--- a/sd/sdi/sdraw.sdi
++++ b/sd/sdi/sdraw.sdi
+@@ -4198,6 +4198,23 @@ SfxVoidItem AlignOnPage SID_ALIGN_PAGE
+     GroupId = SfxGroupId::Modify;
+ ]
+ 
++SfxVoidItem SlideNotes SID_SLIDE_NOTES
++(SfxStringItem Text FN_PARAM_1, SfxInt32Item Part FN_PARAM_2)
++[
++    AutoUpdate = FALSE,
++    FastCall = FALSE,
++    ReadOnlyDoc = FALSE,
++    Toggle = FALSE,
++    Container = FALSE,
++    RecordAbsolute = FALSE,
++    RecordPerSet;
++
++    AccelConfig = FALSE,
++    MenuConfig = FALSE,
++    ToolBoxConfig = FALSE,
++    GroupId = SfxGroupId::Modify;
++]
++
+ SfxVoidItem CopySlide SID_COPY_SLIDE
+ ()
+ [
+diff --git a/sd/source/ui/annotations/annotationmanager.cxx b/sd/source/ui/annotations/annotationmanager.cxx
+index bd882b1..75cd8a6 100644
+--- a/sd/source/ui/annotations/annotationmanager.cxx
++++ b/sd/source/ui/annotations/annotationmanager.cxx
+@@ -537,7 +537,8 @@ void AnnotationManagerImpl::InsertAnnotation(const OUString& rText)
+     OUString sAuthor;
+     if (comphelper::LibreOfficeKit::isActive())
+         sAuthor = mrBase.GetMainViewShell()->GetView()->GetAuthor();
+-    else
++    // A kit client without a view author: the user's name.
++    if (sAuthor.isEmpty())
+     {
+         SvtUserOptions aUserOptions;
+         sAuthor = aUserOptions.GetFullName();
+@@ -656,7 +657,8 @@ void AnnotationManagerImpl::ExecuteReplyToAnnotation( SfxRequest const & rReq )
+     OUString sReplyAuthor;
+     if (comphelper::LibreOfficeKit::isActive())
+         sReplyAuthor = mrBase.GetMainViewShell()->GetView()->GetAuthor();
+-    else
++    // A kit client without a view author: the user's name.
++    if (sReplyAuthor.isEmpty())
+     {
+         SvtUserOptions aUserOptions;
+         sReplyAuthor = aUserOptions.GetFullName();
+diff --git a/sd/source/ui/func/fuinsert.cxx b/sd/source/ui/func/fuinsert.cxx
+index bbe3705..63774f7 100644
+--- a/sd/source/ui/func/fuinsert.cxx
++++ b/sd/source/ui/func/fuinsert.cxx
+@@ -295,8 +295,35 @@ rtl::Reference<FuPoor> FuInsertOLE::Create( ViewShell& rViewSh, ::sd::Window* pW
+     return xFunc;
+ }
+ 
++/// Sets the marked chart from JSON via a copy.
++bool FuInsertOLE::ChangeChart(std::u16string_view rJson)
++{
++    const SdrMarkList& rMarks = mpView->GetMarkedObjectList();
++    if (rMarks.GetMarkCount() != 1)
++        return false;
++    SdrOle2Obj* pOld = dynamic_cast<SdrOle2Obj*>(rMarks.GetMark(0)->GetMarkedSdrObj());
++    if (!pOld || !pOld->IsChart())
++        return false;
++    rtl::Reference<SdrObject> pNew = pOld->CloneSdrObject(pOld->getSdrModelFromSdrObject());
++    const uno::Reference<uno::XInterface> xModel = static_cast<SdrOle2Obj&>(*pNew).getXModel();
++    // The look first: data reads its type.
++    if (!ChartHelper::SetChartLook(xModel, rJson) || !ChartHelper::SetChartData(xModel, rJson))
++        return false;
++    mpView->ReplaceObjectAtView(pOld, *mpView->GetSdrPageView(), pNew.get());
++    return true;
++}
++
+ void FuInsertOLE::DoExecute( SfxRequest& rReq )
+ {
++    // A kit client sets the chart from JSON.
++    const SfxStringItem* pChart
++        = nSlotId == SID_INSERT_DIAGRAM ? rReq.GetArg<SfxStringItem>(FN_PARAM_3) : nullptr;
++    if (pChart && (!ChartHelper::IsChartLook(pChart->GetValue())
++                   || !ChartHelper::IsChartData(pChart->GetValue())))
++        return;
++    if (pChart && ChangeChart(pChart->GetValue()))
++        return;
++
+     if ( nSlotId == SID_ATTR_TABLE ||
+          nSlotId == SID_INSERT_DIAGRAM ||
+          nSlotId == SID_INSERT_MATH )
+@@ -367,7 +394,10 @@ void FuInsertOLE::DoExecute( SfxRequest& rReq )
+                     aSize = OutputDevice::LogicToLogic(aSize, MapMode(aUnit), MapMode(MapUnit::Map100thMM));
+                 }
+ 
+-                Point aPos = mpWindow->GetVisibleCenter();
++                // LOK's window area means nothing; use the slide.
++                Point aPos = comphelper::LibreOfficeKit::isActive()
++                    ? ::tools::Rectangle(Point(), mpView->GetSdrPageView()->GetPage()->GetSize()).Center()
++                    : mpWindow->GetVisibleCenter();
+                 aPos.AdjustX( -(aSize.Width() / 2) );
+                 aPos.AdjustY( -(aSize.Height() / 2) );
+                 aRect = ::tools::Rectangle(aPos, aSize);
+@@ -405,7 +435,14 @@ void FuInsertOLE::DoExecute( SfxRequest& rReq )
+             else
+                 bRet = mpView->InsertObjectAtView(pOleObj.get(), *pPV, SdrInsertFlags::SETDEFLAYER);
+ 
+-            if (bRet && !comphelper::LibreOfficeKit::isActive())
++            if (bRet && pChart)
++            {
++                ChartHelper::AdaptDefaultsForChart(xObj);
++                const uno::Reference<uno::XInterface> xModel = pOleObj->getXModel();
++                ChartHelper::SetChartLook(xModel, pChart->GetValue());
++                ChartHelper::SetChartData(xModel, pChart->GetValue());
++            }
++            else if (bRet && !comphelper::LibreOfficeKit::isActive())
+             {
+                 // Let the chart be activated after the inserting (unless
+                 // via LibreOfficeKit)
+diff --git a/sd/source/ui/inc/DrawViewShell.hxx b/sd/source/ui/inc/DrawViewShell.hxx
+index abac2af..6e42423 100644
+--- a/sd/source/ui/inc/DrawViewShell.hxx
++++ b/sd/source/ui/inc/DrawViewShell.hxx
+@@ -35,6 +35,7 @@ namespace com::sun::star::lang { class XEventListener; }
+ namespace com::sun::star::scanner { class XScannerManager2; }
+ namespace com::sun::star::presentation { class XSlideShow; }
+ 
++class EditTextObject;
+ class Outliner;
+ class SdPage;
+ class SdStyleSheet;
+@@ -281,6 +282,8 @@ public:
+     void            SetZoomOnPage( bool bZoom ) { mbZoomOnPage = bZoom; }
+     bool            IsZoomOnPage() const { return mbZoomOnPage; }
+     static void     CheckLineTo (SfxRequest& rReq);
++    /// The text's one look; none when it varies.
++    static std::optional<SfxItemSet> NotesLook(const EditTextObject& rText, SfxItemPool& rPool);
+     void            SetChildWindowState( SfxItemSet& rSet );
+ 
+     void            UpdateIMapDlg( SdrObject* pObj );
+diff --git a/sd/source/ui/inc/fuinsert.hxx b/sd/source/ui/inc/fuinsert.hxx
+index ca1adfc..3b79e19 100644
+--- a/sd/source/ui/inc/fuinsert.hxx
++++ b/sd/source/ui/inc/fuinsert.hxx
+@@ -77,6 +77,8 @@ class FuInsertOLE final
+     virtual void DoExecute( SfxRequest& rReq ) override;
+ 
+ private:
++    bool ChangeChart(std::u16string_view rJson);
++
+     FuInsertOLE (
+         ViewShell& rViewSh,
+         ::sd::Window* pWin,
+diff --git a/sd/source/ui/unoidl/unomodel.cxx b/sd/source/ui/unoidl/unomodel.cxx
+index b5ccc0d..8418d71 100644
+--- a/sd/source/ui/unoidl/unomodel.cxx
++++ b/sd/source/ui/unoidl/unomodel.cxx
+@@ -121,6 +121,9 @@
+ #include <svx/sdshitm.hxx>
+ #include <svx/svdhlpln.hxx>
+ #include <svx/sdangitm.hxx>
++#include <svx/charthelper.hxx>
++#include <editeng/editobj.hxx>
++#include <editeng/outlobj.hxx>
+ #include <svx/svxids.hrc>
+ #include <svtools/unoimap.hxx>
+ #include <svx/unoshape.hxx>
+@@ -2060,7 +2063,8 @@ void SdXImpressDocument::Notify( SfxBroadcaster& rBC, const SfxHint& rHint )
+ 
+ bool SdXImpressDocument::supportsCommand(std::u16string_view rCommand)
+ {
+-    return rCommand == u"SlideDesign" || rCommand == u"SlideObjects";
++    return rCommand == u"SlideDesign" || rCommand == u"SlideObjects" || rCommand == u"Chart"
++           || rCommand == u"SlideNotes";
+ }
+ 
+ namespace
+@@ -2191,6 +2195,34 @@ void lcl_Selection(::tools::JsonWriter& rJson, sd::View& rView)
+     rJson.put("lockSize", lcl_Flag(aGeo, SID_ATTR_TRANSFORM_PROTECT_SIZE));
+ }
+ 
++/// The one marked chart's name, look and data; nothing otherwise.
++void lcl_Chart(::tools::JsonWriter& rJson, sd::View& rView)
++{
++    const SdrMarkList& rMarks = rView.GetMarkedObjectList();
++    auto pOle = rMarks.GetMarkCount() == 1
++        ? dynamic_cast<SdrOle2Obj*>(rMarks.GetMark(0)->GetMarkedSdrObj()) : nullptr;
++    if (!pOle || !pOle->IsChart())
++        return;
++    const uno::Reference<uno::XInterface> xModel = pOle->getXModel();
++    rJson.put("name", pOle->GetName());
++    ChartHelper::WriteChartLook(rJson, xModel);
++    ChartHelper::WriteChartData(rJson, xModel);
++}
++
++/// The shown slide's notes as text; rich with character formats.
++void lcl_SlideNotes(::tools::JsonWriter& rJson, SdDrawDocument& rDoc, sd::DrawViewShell& rShell)
++{
++    SdPage* pPage = rShell.GetActualPage();
++    SdPage* pNotes = pPage->IsMasterPage()
++        ? nullptr : rDoc.GetSdPage((pPage->GetPageNum() - 1) / 2, PageKind::Notes);
++    auto pObj = pNotes ? dynamic_cast<SdrTextObj*>(pNotes->GetPresObj(PresObjKind::Notes)) : nullptr;
++    rJson.put("part", pPage->IsMasterPage() ? sal_Int32(-1) : sal_Int32((pPage->GetPageNum() - 1) / 2));
++    rJson.put("editable", pObj != nullptr);
++    const OutlinerParaObject* pText = pObj && !pObj->IsEmptyPresObj() ? pObj->GetOutlinerParaObject() : nullptr;
++    rJson.put("text", pText ? pText->GetTextObject().GetText(LINEEND_LF) : OUString());
++    rJson.put("rich", pText && !sd::DrawViewShell::NotesLook(pText->GetTextObject(), rDoc.GetPool()));
++}
++
+ /// The shown slide's objects, selection, guides and snapping.
+ void lcl_SlideObjects(::tools::JsonWriter& rJson, sd::DrawViewShell& rShell)
+ {
+@@ -2247,6 +2279,18 @@ void SdXImpressDocument::getCommandValues(::tools::JsonWriter& rJsonWriter, std:
+             lcl_SlideDesign(rJsonWriter, *mpDoc, *pShell);
+         return;
+     }
++    if (rCommand == ".uno:Chart")
++    {
++        if (DrawViewShell* pShell = GetViewShell())
++            lcl_Chart(rJsonWriter, *pShell->GetView());
++        return;
++    }
++    if (rCommand == ".uno:SlideNotes")
++    {
++        if (DrawViewShell* pShell = GetViewShell())
++            lcl_SlideNotes(rJsonWriter, *mpDoc, *pShell);
++        return;
++    }
+     if (rCommand == ".uno:SlideObjects")
+     {
+         if (DrawViewShell* pShell = GetViewShell())
+@@ -4423,6 +4467,8 @@ void SdXImpressDocument::getPostIts(::tools::JsonWriter& rJsonWriter)
+             uno::Reference<text::XText> xText(xAnnotation->getTextRange());
+             rJsonWriter.put("text", xText->getString());
+             rJsonWriter.put("parthash", pPage->GetUniqueID());
++            // The slide's place, for clients that show slides by index.
++            rJsonWriter.put("part", static_cast<sal_Int32>((pPage->GetPageNum() - 1) / 2));
+             geometry::RealPoint2D const aPoint = xAnnotation->getPosition();
+             geometry::RealSize2D const aSize = xAnnotation->getSize();
+             ::tools::Rectangle aRectangle(Point(aPoint.X * 100.0, aPoint.Y * 100.0), Size(aSize.Width * 100.0, aSize.Height * 100.0));
+diff --git a/sd/source/ui/view/drviews2.cxx b/sd/source/ui/view/drviews2.cxx
+index d8b1015..8b734af 100644
+--- a/sd/source/ui/view/drviews2.cxx
++++ b/sd/source/ui/view/drviews2.cxx
+@@ -3840,6 +3840,46 @@ void DrawViewShell::FuTemporary(SfxRequest& rReq)
+         }
+         break;
+ 
++        case SID_SLIDE_NOTES:
++        {
++            // Slide Part's notes, as plain text.
++            const SfxStringItem* pText = rReq.GetArg<SfxStringItem>(FN_PARAM_1);
++            const SfxInt32Item* pPart = rReq.GetArg<SfxInt32Item>(FN_PARAM_2);
++            const sal_Int32 nPart = pPart ? pPart->GetValue() : -1;
++            SdPage* pNotes = pText && nPart >= 0
++                                     && nPart < GetDoc()->GetSdPageCount(PageKind::Standard)
++                ? GetDoc()->GetSdPage(nPart, PageKind::Notes) : nullptr;
++            auto pObj = pNotes ? dynamic_cast<SdrTextObj*>(pNotes->GetPresObj(PresObjKind::Notes)) : nullptr;
++            const OutlinerParaObject* pOld = pObj && !pObj->IsEmptyPresObj() ? pObj->GetOutlinerParaObject() : nullptr;
++            std::optional<SfxItemSet> oLook = pOld
++                ? NotesLook(pOld->GetTextObject(), GetDoc()->GetPool())
++                : SfxItemSet(GetDoc()->GetPool(), svl::Items<EE_PARA_START, EE_CHAR_END>);
++            // Varied formatting would be lost.
++            if (pObj && oLook)
++            {
++                const OUString& rText = pText->GetValue();
++                const bool bEmpty = rText.isEmpty();
++                GetDoc()->BegUndo(SdResId(STR_NOTES_MODE));
++                GetDoc()->AddUndo(GetDoc()->GetSdrUndoFactory().CreateUndoObjectSetText(*pObj, 0));
++                pNotes->SetObjText(pObj, nullptr, PresObjKind::Notes,
++                                   bEmpty ? pNotes->GetPresObjText(PresObjKind::Notes) : rText);
++                if (!bEmpty && oLook->Count())
++                {
++                    SdOutliner* pOutl = GetDoc()->GetInternalOutliner();
++                    pOutl->Clear();
++                    pOutl->SetText(*pObj->GetOutlinerParaObject());
++                    pOutl->QuickSetAttribs(*oLook, ESelection::All());
++                    pObj->SetOutlinerParaObject(pOutl->CreateParaObject());
++                    pOutl->Clear();
++                }
++                pObj->SetEmptyPresObj(bEmpty);
++                GetDoc()->EndUndo();
++                rReq.Done();
++            }
++            Cancel();
++        }
++        break;
++
+         case SID_ALIGN_PAGE:
+         {
+             mpDrawView->AlignMarkedObjects(SdrHorAlign::Center, SdrVertAlign::Center);
+@@ -4776,6 +4816,44 @@ void DrawViewShell::GetStatePropPanelAttr(SfxItemSet& rSet)
+     }
+ }
+ 
++std::optional<SfxItemSet> DrawViewShell::NotesLook(const EditTextObject& rText, SfxItemPool& rPool)
++{
++    std::optional<SfxItemSet> oPara, oChar;
++    for (sal_Int32 i = 0; i < rText.GetParagraphCount(); ++i)
++    {
++        SfxItemSet aPara(rPool, svl::Items<EE_PARA_START, EE_PARA_END>);
++        aPara.Put(rText.GetParaAttribs(i));
++        // The outliner keeps this one itself.
++        aPara.ClearItem(EE_PARA_BULLETSTATE);
++        if (oPara && *oPara != aPara)
++            return {};
++        oPara.emplace(aPara);
++        const sal_Int32 nLen = rText.GetText(i).getLength();
++        if (!nLen)
++            continue;
++        SfxItemSet aChar(rPool, svl::Items<EE_CHAR_START, EE_CHAR_END>);
++        std::vector<EECharAttrib> aAttribs;
++        rText.GetCharAttribs(i, aAttribs);
++        for (const EECharAttrib& rAttrib : aAttribs)
++        {
++            if (rAttrib.nStart == rAttrib.nEnd)
++                continue;
++            if (rAttrib.nStart > 0 || rAttrib.nEnd < nLen)
++                return {};
++            aChar.Put(*rAttrib.pAttr);
++        }
++        if (oChar && *oChar != aChar)
++            return {};
++        oChar.emplace(aChar);
++    }
++    SfxItemSet aLook(rPool, svl::Items<EE_PARA_START, EE_CHAR_END>);
++    if (oPara)
++        aLook.Put(*oPara);
++    if (oChar)
++        aLook.Put(*oChar);
++    return aLook;
++}
++
+ } // end of namespace sd
+ 
+ /* vim:set shiftwidth=4 softtabstop=4 expandtab: */
+diff --git a/svx/sdi/svx.sdi b/svx/sdi/svx.sdi
+index 9921969..0be9429 100644
+--- a/svx/sdi/svx.sdi
++++ b/svx/sdi/svx.sdi
+@@ -5052,7 +5052,7 @@ SfxVoidItem InsertObject SID_INSERT_OBJECT
+ 
+ 
+ SfxVoidItem InsertObjectChart SID_INSERT_DIAGRAM
+-(SfxBoolItem ColHeaders FN_PARAM_1,SfxBoolItem RowHeaders FN_PARAM_2,SfxBoolItem InNewTable FN_PARAM_4,SfxStringItem RangeList FN_PARAM_5)
++(SfxBoolItem ColHeaders FN_PARAM_1,SfxBoolItem RowHeaders FN_PARAM_2,SfxStringItem Chart FN_PARAM_3,SfxBoolItem InNewTable FN_PARAM_4,SfxStringItem RangeList FN_PARAM_5)
+ [
+     AutoUpdate = FALSE,
+     FastCall = FALSE,

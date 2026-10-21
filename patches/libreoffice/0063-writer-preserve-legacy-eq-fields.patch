@@ -1,0 +1,433 @@
+Writer: keep supported legacy EQ formulas as editable EQ fields
+
+Rebuild supported fields from the current formula tree, not saved source XML.
+OMML inline fractions use different sizing than Word's legacy EQ fields.
+The source-kind marker survives MathML roundtrips; unsupported model nodes
+continue through the existing OMML exporter. The safe set is ASCII literal
+text, one-line expressions, uniform-size wrappers and nested fractions with
+one current font, size and posture. Other equations are unchanged.
+
+--- a/starmath/Library_sm.mk
++++ b/starmath/Library_sm.mk
+@@ -78,6 +78,7 @@
+         starmath/source/dialog \
+         starmath/source/document \
+         starmath/source/edit \
++        starmath/source/eqexport \
+         starmath/source/smediteng \
+         starmath/source/format \
+         starmath/source/mathtype \
+--- a/sw/source/writerfilter/dmapper/DomainMapper_Impl.cxx
++++ b/sw/source/writerfilter/dmapper/DomainMapper_Impl.cxx
+@@ -3837,6 +3837,16 @@
+     double fHeight = 0;
+     if (GetAnyProperty(PROP_CHAR_HEIGHT, pContext->getProperties()) >>= fHeight)
+         xMath->setPropertyValue(u"BaseFontHeight"_ustr, uno::Any(sal_Int16(std::round(fHeight))));
++    OUString aFont;
++    if (GetAnyProperty(PROP_CHAR_FONT_NAME, pContext->getProperties()) >>= aFont)
++    {
++        for (const auto& rName : { u"FontNameText"_ustr, u"FontNameNumbers"_ustr,
++                                  u"FontNameFunctions"_ustr, u"FontNameVariables"_ustr })
++            xMath->setPropertyValue(rName, uno::Any(aFont));
++    }
++    const uno::Sequence<beans::PropertyValue> aOrigin{
++        comphelper::makePropertyValue(u"WordEQ"_ustr, true) };
++    xMath->setPropertyValue(u"InteropGrabBag"_ustr, uno::Any(aOrigin));
+     appendFormula(xFormula);
+ }
+ 
+@@ -8961,6 +8971,7 @@
+             return false;
+ 
+         bRet = pContext->GetTextField().is()
++            || pContext->GetFieldId() == FIELD_EQ
+             || pContext->GetFieldId() == FIELD_FORMDROPDOWN
+             || pContext->GetFieldId() == FIELD_FILLIN;
+     }
+@@ -9041,6 +9052,8 @@
+     if( !pContext )
+         return;
+ 
++    if (pContext->GetFieldId() == FIELD_EQ)
++        return;
+     uno::Reference<text::XTextField> xTextField = pContext->GetTextField();
+     try
+     {
+--- a/starmath/source/document.cxx
++++ b/starmath/source/document.cxx
+@@ -69,6 +69,7 @@
+ #include <view.hxx>
+ #include "mathtype.hxx"
+ #include "ooxmlexport.hxx"
++#include "eqexport.hxx"
+ #include "ooxmlimport.hxx"
+ #include "rtfexport.hxx"
+ #include <mathmlimport.hxx>
+@@ -820,6 +821,12 @@
+         Parse();
+     if( mpTree )
+         ArrangeFormula();
++    if (documentType == oox::drawingml::DOCUMENT_DOCX)
++    {
++        uno::Reference<beans::XPropertySet> xProperties(GetModel(), uno::UNO_QUERY_THROW);
++        if (SmIsWordEq(xProperties) && SmExportWordEq(mpTree.get(), pSerializer))
++            return;
++    }
+     SmOoxmlExport aEquation(mpTree.get(), version, documentType);
+     if(documentType == oox::drawingml::DOCUMENT_DOCX)
+         aEquation.ConvertFromStarMath( pSerializer, nAlign);
+--- a/starmath/source/mathml/mathmlexport.cxx
++++ b/starmath/source/mathml/mathmlexport.cxx
+@@ -62,6 +62,7 @@
+ #include <smmod.hxx>
+ #include <unomodel.hxx>
+ #include <document.hxx>
++#include "../eqexport.hxx"
+ #include <utility.hxx>
+ #include <cfgitem.hxx>
+ #include <starmathdatabase.hxx>
+@@ -471,8 +472,36 @@
+         sStrBuf.append(static_cast<sal_Int32>(nSmSyntaxVersion));
+ 
+     AddAttribute(XML_NAMESPACE_MATH, XML_ENCODING, sStrBuf.makeStringAndClear());
+-    SvXMLElementExport aAnnotation(*this, XML_NAMESPACE_MATH, XML_ANNOTATION, true, false);
+-    GetDocHandler()->characters(aText);
++    {
++        SvXMLElementExport aAnnotation(*this, XML_NAMESPACE_MATH, XML_ANNOTATION, true, false);
++        GetDocHandler()->characters(aText);
++    }
++    uno::Reference<beans::XPropertySet> xProperties(xModel, uno::UNO_QUERY_THROW);
++    if (SmIsWordEq(xProperties))
++    {
++        AddAttribute(XML_NAMESPACE_MATH, XML_ENCODING,
++                     u"application/vnd.elyoffice.word-eq"_ustr);
++        {
++            SvXMLElementExport aOrigin(*this, XML_NAMESPACE_MATH, XML_ANNOTATION, true, false);
++            GetDocHandler()->characters(u"true"_ustr);
++        }
++        {
++            AddAttribute(XML_NAMESPACE_MATH, XML_ENCODING,
++                         u"application/vnd.elyoffice.word-eq-font"_ustr);
++            SvXMLElementExport aFont(*this, XML_NAMESPACE_MATH, XML_ANNOTATION, true, false);
++            OUString aName;
++            xProperties->getPropertyValue(u"FontNameText"_ustr) >>= aName;
++            GetDocHandler()->characters(aName);
++        }
++        {
++            AddAttribute(XML_NAMESPACE_MATH, XML_ENCODING,
++                         u"application/vnd.elyoffice.word-eq-size"_ustr);
++            SvXMLElementExport aSize(*this, XML_NAMESPACE_MATH, XML_ANNOTATION, true, false);
++            sal_Int16 nHeight = 0;
++            xProperties->getPropertyValue(u"BaseFontHeight"_ustr) >>= nHeight;
++            GetDocHandler()->characters(OUString::number(nHeight));
++        }
++    }
+ }
+ 
+ void SmXMLExport::GetViewSettings(Sequence<PropertyValue>& aProps)
+--- a/starmath/source/mathml/mathmlimport.cxx
++++ b/starmath/source/mathml/mathmlimport.cxx
+@@ -65,6 +65,7 @@
+ #include <xparsmlbase.hxx>
+ #include <mathmlimport.hxx>
+ #include <document.hxx>
++#include "../eqexport.hxx"
+ #include <smdll.hxx>
+ #include <unomodel.hxx>
+ #include <utility.hxx>
+@@ -1160,6 +1161,8 @@
+ class SmXMLAnnotationContext_Impl : public SmXMLImportContext
+ {
+     sal_uInt8 mnStarMathVersion;
++    OUString m_sWordEqProperty;
++    OUString m_aWordEq;
+ 
+ public:
+     SmXMLAnnotationContext_Impl(SmXMLImport& rImport)
+@@ -1169,6 +1172,7 @@
+     }
+ 
+     void SAL_CALL characters(const OUString& rChars) override;
++    void SAL_CALL endFastElement(sal_Int32 nElement) override;
+ 
+     void SAL_CALL startFastElement(
+         sal_Int32 nElement, const uno::Reference<xml::sax::XFastAttributeList>& xAttrList) override;
+@@ -1184,6 +1188,12 @@
+         switch (aIter.getToken() & TOKEN_MASK)
+         {
+             case XML_ENCODING:
++                if (aIter.toView() == "application/vnd.elyoffice.word-eq")
++                    m_sWordEqProperty = "WordEQ";
++                else if (aIter.toView() == "application/vnd.elyoffice.word-eq-font")
++                    m_sWordEqProperty = "FontNameText";
++                else if (aIter.toView() == "application/vnd.elyoffice.word-eq-size")
++                    m_sWordEqProperty = "BaseFontHeight";
+                 mnStarMathVersion
+                     = aIter.toView() == "StarMath 5.0" ? 5 : aIter.toView() == "StarMath 6" ? 6 : 0;
+                 break;
+@@ -1196,10 +1206,33 @@
+ 
+ void SmXMLAnnotationContext_Impl::characters(const OUString& rChars)
+ {
+-    if (mnStarMathVersion)
++    if (!m_sWordEqProperty.isEmpty())
++        m_aWordEq += rChars;
++    else if (mnStarMathVersion)
+     {
+         GetSmImport().SetText(GetSmImport().GetText() + rChars);
+         GetSmImport().SetSmSyntaxVersion(mnStarMathVersion);
++    }
++}
++
++void SmXMLAnnotationContext_Impl::endFastElement(sal_Int32)
++{
++    if (!m_sWordEqProperty.isEmpty())
++    {
++        uno::Reference<beans::XPropertySet> xProperties(GetSmImport().GetModel(),
++                                                       uno::UNO_QUERY_THROW);
++        if (m_sWordEqProperty == "WordEQ" && m_aWordEq == "true")
++            SmMarkWordEq(xProperties);
++        else if (m_sWordEqProperty == "FontNameText" && SmIsWordEq(xProperties))
++            xProperties->setPropertyValue(m_sWordEqProperty, uno::Any(m_aWordEq));
++        else if (m_sWordEqProperty == "BaseFontHeight" && SmIsWordEq(xProperties))
++        {
++            const sal_Int32 nHeight = m_aWordEq.toInt32();
++            if (nHeight > 0 && nHeight <= SAL_MAX_INT16
++                && OUString::number(nHeight) == m_aWordEq)
++                xProperties->setPropertyValue(m_sWordEqProperty,
++                                              uno::Any(sal_Int16(nHeight)));
++        }
+     }
+ }
+ 
+--- /dev/null
++++ b/starmath/source/eqexport.hxx
+@@ -0,0 +1,21 @@
++/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++/*
++ * This file is part of the LibreOffice project.
++ *
++ * This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
++ */
++
++#pragma once
++
++#include <com/sun/star/beans/XPropertySet.hpp>
++#include <sax/fshelper.hxx>
++
++class SmNode;
++
++bool SmIsWordEq(const css::uno::Reference<css::beans::XPropertySet>& xProperties);
++void SmMarkWordEq(const css::uno::Reference<css::beans::XPropertySet>& xProperties);
++bool SmExportWordEq(const SmNode* pTree, const sax_fastparser::FSHelperPtr& pSerializer);
++
++/* vim:set shiftwidth=4 softtabstop=4 expandtab: */
+--- /dev/null
++++ b/starmath/source/eqexport.cxx
+@@ -0,0 +1,203 @@
++/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++/*
++ * This file is part of the LibreOffice project.
++ *
++ * This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
++ */
++
++#include "eqexport.hxx"
++
++#include <com/sun/star/beans/PropertyValue.hpp>
++#include <comphelper/propertyvalue.hxx>
++#include <node.hxx>
++#include <o3tl/unit_conversion.hxx>
++#include <oox/token/tokens.hxx>
++#include <rtl/ustrbuf.hxx>
++
++using namespace com::sun::star;
++using namespace oox;
++
++bool SmIsWordEq(const uno::Reference<beans::XPropertySet>& xProperties)
++{
++    uno::Sequence<beans::PropertyValue> aBag;
++    xProperties->getPropertyValue(u"InteropGrabBag"_ustr) >>= aBag;
++    for (const auto& rProperty : aBag)
++    {
++        bool bWordEq = false;
++        if (rProperty.Name == "WordEQ" && (rProperty.Value >>= bWordEq))
++            return bWordEq;
++    }
++    return false;
++}
++
++void SmMarkWordEq(const uno::Reference<beans::XPropertySet>& xProperties)
++{
++    uno::Sequence<beans::PropertyValue> aBag;
++    xProperties->getPropertyValue(u"InteropGrabBag"_ustr) >>= aBag;
++    for (sal_Int32 i = 0; i < aBag.getLength(); ++i)
++    {
++        if (aBag[i].Name == "WordEQ")
++        {
++            aBag.getArray()[i].Value <<= true;
++            xProperties->setPropertyValue(u"InteropGrabBag"_ustr, uno::Any(aBag));
++            return;
++        }
++    }
++    const sal_Int32 nSize = aBag.getLength();
++    aBag.realloc(nSize + 1);
++    aBag.getArray()[nSize] = comphelper::makePropertyValue(u"WordEQ"_ustr, true);
++    xProperties->setPropertyValue(u"InteropGrabBag"_ustr, uno::Any(aBag));
++}
++
++namespace
++{
++class EqExport
++{
++    const SmFace* m_pFont = nullptr;
++
++    bool text(const SmTextNode* pNode, OUStringBuffer& rCode, OUStringBuffer& rDisplay)
++    {
++        if (pNode->GetToken().eType != TTEXT)
++            return false;
++        const SmFace& rFont = pNode->GetFont();
++        if (rFont.GetWeight() != WEIGHT_NORMAL && rFont.GetWeight() != WEIGHT_BOLD)
++            return false;
++        if (rFont.GetItalic() != ITALIC_NONE && rFont.GetItalic() != ITALIC_NORMAL)
++            return false;
++        if (rFont.GetColor() != COL_AUTO && rFont.GetColor() != COL_BLACK)
++            return false;
++        if (m_pFont && (rFont.GetFamilyName() != m_pFont->GetFamilyName()
++                        || rFont.GetFontSize().Height() != m_pFont->GetFontSize().Height()
++                        || rFont.GetWeight() != m_pFont->GetWeight()
++                        || rFont.GetItalic() != m_pFont->GetItalic()))
++            return false;
++        m_pFont = &rFont;
++        const OUString& rText = pNode->GetText();
++        for (sal_Int32 i = 0; i < rText.getLength(); ++i)
++        {
++            const sal_Unicode c = rText[i];
++            if (c < 0x20 || c > 0x7e || c == '"')
++                return false;
++            if (c == '\\' || c == ',' || c == '(' || c == ')')
++                rCode.append('\\');
++            rCode.append(c);
++            rDisplay.append(c);
++        }
++        return true;
++    }
++
++    bool node(const SmNode* pNode, OUStringBuffer& rCode, OUStringBuffer& rDisplay)
++    {
++        if (!pNode)
++            return false;
++        switch (pNode->GetType())
++        {
++            case SmNodeType::Text:
++                return text(static_cast<const SmTextNode*>(pNode), rCode, rDisplay);
++            case SmNodeType::BinVer:
++                if (pNode->GetToken().eType != TOVER || pNode->GetNumSubNodes() != 3)
++                    return false;
++                rCode.append("\\f(");
++                rDisplay.append('(');
++                if (!node(pNode->GetSubNode(0), rCode, rDisplay))
++                    return false;
++                rCode.append(',');
++                rDisplay.append(")/(");
++                if (!node(pNode->GetSubNode(2), rCode, rDisplay))
++                    return false;
++                rCode.append(')');
++                rDisplay.append(')');
++                return true;
++            case SmNodeType::Font:
++                if (pNode->GetToken().eType != TSIZE)
++                    return false;
++                return node(pNode->GetSubNode(1), rCode, rDisplay);
++            case SmNodeType::Table:
++                if (pNode->GetNumSubNodes() != 1)
++                    return false;
++                [[fallthrough]];
++            case SmNodeType::Line:
++            case SmNodeType::Expression:
++            {
++                size_t nContent = 0;
++                for (size_t i = 0; i < pNode->GetNumSubNodes(); ++i)
++                {
++                    const SmNode* pChild = pNode->GetSubNode(i);
++                    const bool bSpace = pChild && pChild->GetType() == SmNodeType::Text
++                        && static_cast<const SmTextNode*>(pChild)->GetText().trim().isEmpty();
++                    if (!bSpace && ++nContent > 1)
++                        return false;
++                    if (!node(pNode->GetSubNode(i), rCode, rDisplay))
++                        return false;
++                }
++                return true;
++            }
++            default:
++                return false;
++        }
++    }
++
++    void properties(const sax_fastparser::FSHelperPtr& pSerializer)
++    {
++        pSerializer->startElementNS(XML_w, XML_rPr);
++        pSerializer->singleElementNS(XML_w, XML_rFonts,
++            FSNS(XML_w, XML_ascii), m_pFont->GetFamilyName(),
++            FSNS(XML_w, XML_hAnsi), m_pFont->GetFamilyName());
++        pSerializer->singleElementNS(XML_w, XML_b, FSNS(XML_w, XML_val),
++            m_pFont->GetWeight() == WEIGHT_BOLD ? "1" : "0");
++        pSerializer->singleElementNS(XML_w, XML_i, FSNS(XML_w, XML_val),
++            m_pFont->GetItalic() == ITALIC_NORMAL ? "1" : "0");
++        pSerializer->singleElementNS(XML_w, XML_color, FSNS(XML_w, XML_val),
++            m_pFont->GetColor() == COL_AUTO ? "auto" : "000000");
++        const auto nHalfPoints = o3tl::convert(m_pFont->GetFontSize().Height() * 2,
++            SmO3tlLengthUnit(), o3tl::Length::pt);
++        pSerializer->singleElementNS(XML_w, XML_sz, FSNS(XML_w, XML_val), OString::number(nHalfPoints));
++        pSerializer->endElementNS(XML_w, XML_rPr);
++    }
++
++public:
++    bool write(const SmNode* pTree, const sax_fastparser::FSHelperPtr& pSerializer)
++    {
++        OUStringBuffer aCode;
++        OUStringBuffer aDisplay;
++        if (!node(pTree, aCode, aDisplay) || !m_pFont || aCode.isEmpty()
++            || aCode[0] == ' ')
++            return false;
++        pSerializer->startElementNS(XML_w, XML_r);
++        properties(pSerializer);
++        pSerializer->singleElementNS(XML_w, XML_fldChar, FSNS(XML_w, XML_fldCharType), "begin");
++        pSerializer->endElementNS(XML_w, XML_r);
++        pSerializer->startElementNS(XML_w, XML_r);
++        properties(pSerializer);
++        pSerializer->startElementNS(XML_w, XML_instrText, FSNS(XML_xml, XML_space), "preserve");
++        const OUString aInstruction = u" EQ "_ustr + aCode.makeStringAndClear();
++        pSerializer->writeEscaped(aInstruction);
++        pSerializer->endElementNS(XML_w, XML_instrText);
++        pSerializer->endElementNS(XML_w, XML_r);
++        pSerializer->startElementNS(XML_w, XML_r);
++        properties(pSerializer);
++        pSerializer->singleElementNS(XML_w, XML_fldChar, FSNS(XML_w, XML_fldCharType), "separate");
++        pSerializer->endElementNS(XML_w, XML_r);
++        pSerializer->startElementNS(XML_w, XML_r);
++        properties(pSerializer);
++        pSerializer->startElementNS(XML_w, XML_t, FSNS(XML_xml, XML_space), "preserve");
++        pSerializer->writeEscaped(aDisplay.makeStringAndClear());
++        pSerializer->endElementNS(XML_w, XML_t);
++        pSerializer->endElementNS(XML_w, XML_r);
++        pSerializer->startElementNS(XML_w, XML_r);
++        properties(pSerializer);
++        pSerializer->singleElementNS(XML_w, XML_fldChar, FSNS(XML_w, XML_fldCharType), "end");
++        pSerializer->endElementNS(XML_w, XML_r);
++        return true;
++    }
++};
++}
++
++bool SmExportWordEq(const SmNode* pTree, const sax_fastparser::FSHelperPtr& pSerializer)
++{
++    return EqExport().write(pTree, pSerializer);
++}
++
++/* vim:set shiftwidth=4 softtabstop=4 expandtab: */
+

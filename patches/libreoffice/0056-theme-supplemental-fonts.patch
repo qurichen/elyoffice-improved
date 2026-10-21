@@ -1,0 +1,37 @@
+DrawingML: export supplemental script fonts from the theme model
+
+Theme import already populates both FontScheme supplemental lists.
+ThemeExport wrote only latin/ea/cs and dropped every a:font mapping.
+Write both model lists after the primary fonts in each collection.
+This preserves script-specific major/minor choices, including edits,
+without restoring original theme XML over the current document model.
+
+The regression covers eight scripts with different major/minor fonts,
+checks all sixteen mappings and the body after two DOCX saves.
+A rebuilt C++ engine must still run this regression before release.
+
+diff --git a/oox/source/export/ThemeExport.cxx b/oox/source/export/ThemeExport.cxx
+--- a/oox/source/export/ThemeExport.cxx
++++ b/oox/source/export/ThemeExport.cxx
+@@ -124,6 +124,10 @@
+         mpFS->singleElementNS(XML_a, XML_cs, aAttrList);
+     }
+ 
++    for (auto const& rFont : rFontScheme.getMajorSupplementalFontList())
++        mpFS->singleElementNS(XML_a, XML_font, XML_script, rFont.maScript,
++                             XML_typeface, rFont.maTypeface);
++
+     mpFS->endElementNS(XML_a, XML_majorFont);
+ 
+     mpFS->startElementNS(XML_a, XML_minorFont);
+@@ -143,6 +147,10 @@
+         fillAttrList(aAttrList, rFontScheme.getMinorComplex());
+         mpFS->singleElementNS(XML_a, XML_cs, aAttrList);
+     }
++
++    for (auto const& rFont : rFontScheme.getMinorSupplementalFontList())
++        mpFS->singleElementNS(XML_a, XML_font, XML_script, rFont.maScript,
++                             XML_typeface, rFont.maTypeface);
+ 
+     mpFS->endElementNS(XML_a, XML_minorFont);
+ 

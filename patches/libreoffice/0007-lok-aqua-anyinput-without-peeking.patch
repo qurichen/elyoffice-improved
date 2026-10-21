@@ -1,0 +1,15 @@
+diff --git a/vcl/osx/salinst.cxx b/vcl/osx/salinst.cxx
+index 6cd78291c..368ed718c 100644
+--- a/vcl/osx/salinst.cxx
++++ b/vcl/osx/salinst.cxx
+@@ -754,6 +754,10 @@ bool AquaSalInstance::AnyInput( VclInputFlags nType )
+             return true;
+     }
+ 
++    // LOK: peeking runs client requests inside idle jobs.
++    if (comphelper::LibreOfficeKit::isActive())
++        return comphelper::LibreOfficeKit::anyInput();
++
+     unsigned/*NSUInteger*/ nEventMask = 0;
+     if( nType & VclInputFlags::MOUSE)
+     {

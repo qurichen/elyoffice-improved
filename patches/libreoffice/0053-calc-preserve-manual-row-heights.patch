@@ -1,0 +1,39 @@
+Calc: retain manual row heights in point units
+
+Only automatic heights keep the existing MSO 0.75pt quantization.
+Rows and sheet defaults explicitly marked customHeight retain their
+fractional point value. The old floor loses 23.2pt as 22.5pt and turns
+0.5pt into zero, so a manual thin row becomes an automatic default row.
+
+The existing point-to-twip conversion already bounds storage precision.
+The synthetic MSO fixture and an otherwise identical non-MSO control
+show that the truncation alone causes the geometry loss. The control
+retains all seven manual heights, the custom default and nine formulas.
+A rebuilt C++ engine still needs to run the new regression test.
+
+diff --git a/sc/source/filter/oox/sheetdatacontext.cxx b/sc/source/filter/oox/sheetdatacontext.cxx
+index 920f64d..00d05db 100644
+--- a/sc/source/filter/oox/sheetdatacontext.cxx
++++ b/sc/source/filter/oox/sheetdatacontext.cxx
+@@ -289,7 +289,7 @@ void SheetDataContext::importRow( const AttributeList& rAttribs )
+     aModel.mbThickTop     = rAttribs.getBool( XML_thickTop, false );
+     aModel.mbThickBottom  = rAttribs.getBool( XML_thickBot, false );
+ 
+-    if (aModel.mfHeight > 0 && getFilter().isMSODocument())
++    if (aModel.mfHeight > 0 && !aModel.mbCustomHeight && getFilter().isMSODocument())
+     {
+         aModel.mfHeight -= fmod(aModel.mfHeight, 0.75);  //round down to 0.75pt
+     }
+diff --git a/sc/source/filter/oox/worksheetfragment.cxx b/sc/source/filter/oox/worksheetfragment.cxx
+index 0b31247..55c9d7d 100644
+--- a/sc/source/filter/oox/worksheetfragment.cxx
++++ b/sc/source/filter/oox/worksheetfragment.cxx
+@@ -667,7 +667,7 @@ void WorksheetFragment::importSheetFormatPr( const AttributeList& rAttribs )
+     // XML_outlineLevelCol
+     // as it will be updated during export to OOXML
+     double fDefaultRowHeight = rAttribs.getDouble(XML_defaultRowHeight, 0.0);
+-    if (getFilter().isMSODocument())
++    if (!rAttribs.getBool(XML_customHeight, false) && getFilter().isMSODocument())
+     {
+         fDefaultRowHeight -= fmod(fDefaultRowHeight, 0.75);  //round down to 0.75pt
+     }

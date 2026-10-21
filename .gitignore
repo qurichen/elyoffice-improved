@@ -1,0 +1,24 @@
+# Build output and downloads
+/target/
+/dist/
+/engines
+/reference
+node_modules/
+.DS_Store
+.ruff_cache/
+__pycache__/
+*.pyc
+*.pyo
+
+# Local only
+/tasks/reviews/.pane
+/.pi/
+/markdown-sample.md
+/docs/engineering-risks.md
+/docs/qa.md
+/docs/acceptance.md
+/docs/test-map.md
+/assets/papirus_icons-master.zip
+/Gitea.md
+/.work/
+/TyporaRef

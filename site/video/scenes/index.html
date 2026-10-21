@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Ely Office film scenes</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+      }
+      svg {
+        position: absolute;
+        inset: 0;
+      }
+      .tile .face.top {
+        stroke: var(--tone);
+        stroke-width: 1.2;
+      }
+      .words > * {
+        position: absolute;
+        left: 0;
+        right: 0;
+        margin: 0;
+        text-align: center;
+        white-space: nowrap;
+      }
+      h1 {
+        top: 104px;
+        font-size: 104px;
+        font-weight: 700;
+        letter-spacing: -0.03em;
+        line-height: 1;
+      }
+      .version {
+        top: 936px;
+        font-size: 30px;
+        font-weight: 400;
+      }
+      .url {
+        top: 1000px;
+        font-size: 24px;
+        font-weight: 300;
+        letter-spacing: 0.01em;
+      }
+      .cap {
+        top: 846px;
+      }
+      .cap .en {
+        margin: 0;
+        font-size: 48px;
+        font-weight: 600;
+        letter-spacing: -0.015em;
+      }
+      .cap .zh {
+        margin: 14px 0 0;
+        font-family: "PingFang SC", sans-serif;
+        font-size: 30px;
+        font-weight: 400;
+        letter-spacing: 0.04em;
+        opacity: 0.7;
+      }
+    </style>
+  </head>
+  <body>
+    <svg id="frame" width="1920" height="1080" viewBox="0 0 1920 1080"><g id="world"></g></svg>
+    <div class="words">
+      <h1 data-text="title">Ely Office</h1>
+      <h1 data-text="name">Ely Office 0.1.0</h1>
+      <p class="version" data-text="version" data-soft>Out now for macOS · Windows and Linux soon　macOS 现已推出 · Windows 与 Linux 即将推出</p>
+      <p class="url" data-text="url" data-soft>git.zacharyzhang.com/ZacharyZhang-NY/ElyOffice/releases</p>
+      <div class="cap" data-text="offline"><p class="en">Works with the network off.</p><p class="zh">断网照常工作。</p></div>
+      <div class="cap" data-text="open"><p class="en">Open source, AGPL.</p><p class="zh">开源，AGPL 许可。</p></div>
+      <div class="cap" data-text="local"><p class="en">Your files stay in your folders.</p><p class="zh">文件留在你自己的文件夹里。</p></div>
+    </div>
+    <script type="module" src="./page.ts"></script>
+  </body>
+</html>

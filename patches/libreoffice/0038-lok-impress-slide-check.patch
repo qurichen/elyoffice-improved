@@ -1,0 +1,157 @@
+LOK: Impress checks a deck before a show
+
+.uno:SlideCheck lists, for every slide and master, the font families
+its text asks for, its linked files (pictures, OLE) and whether each is
+missing, and the objects the kernel cannot show (unreadable pictures,
+OLE objects with no data, pictures that do not decode). A missing
+linked picture is listed once.
+
+diff --git a/sd/source/ui/unoidl/unomodel.cxx b/sd/source/ui/unoidl/unomodel.cxx
+index 3aa98bc..8027106 100644
+--- a/sd/source/ui/unoidl/unomodel.cxx
++++ b/sd/source/ui/unoidl/unomodel.cxx
+@@ -199,6 +199,11 @@
+ #include <svx/ColorSets.hxx>
+ #include <docmodel/theme/Theme.hxx>
+ #include <svx/svdopage.hxx>
++#include <svx/svdograf.hxx>
++#include <svx/svditer.hxx>
++#include <editeng/editdata.hxx>
++#include <com/sun/star/embed/XLinkageSupport.hpp>
++#include <svtools/embedhlp.hxx>
+ #include <svx/svdopath.hxx>
+ #include <tools/multisel.hxx>
+ #include <basegfx/matrix/b2dhommatrix.hxx>
+@@ -2072,7 +2077,7 @@ bool SdXImpressDocument::supportsCommand(std::u16string_view rCommand)
+     return rCommand == u"SlideDesign" || rCommand == u"SlideObjects" || rCommand == u"Chart"
+            || rCommand == u"SlideNotes" || rCommand == u"SlideTransition"
+            || rCommand == u"SlideAnimations" || rCommand == u"SlideMedia"
+-           || rCommand == u"SlideShow";
++           || rCommand == u"SlideShow" || rCommand == u"SlideCheck";
+ }
+ 
+ namespace
+@@ -2264,6 +2269,111 @@ void lcl_SlideMedia(::tools::JsonWriter& rJson, SdPage& rPage)
+     }
+ }
+ 
++/// Fonts a text object asks for, all scripts.
++void lcl_TextFonts(const SdrTextObj& rObj, std::set<OUString>& rFonts)
++{
++    for (const auto& nWhich : { EE_CHAR_FONTINFO, EE_CHAR_FONTINFO_CJK, EE_CHAR_FONTINFO_CTL })
++        rFonts.insert(rObj.GetMergedItem(nWhich).GetFamilyName());
++    for (sal_Int32 nText = 0; nText < rObj.getTextCount(); ++nText)
++    {
++        const OutlinerParaObject* pText = rObj.getText(nText)->GetOutlinerParaObject();
++        if (!pText)
++            continue;
++        const EditTextObject& rEdit = pText->GetTextObject();
++        for (sal_Int32 nPara = 0; nPara < rEdit.GetParagraphCount(); ++nPara)
++        {
++            std::vector<EECharAttrib> aAttribs;
++            rEdit.GetCharAttribs(nPara, aAttribs);
++            for (const EECharAttrib& rAttrib : aAttribs)
++                if (auto pFont = dynamic_cast<const SvxFontItem*>(rAttrib.pAttr))
++                    rFonts.insert(pFont->GetFamilyName());
++        }
++    }
++}
++
++/// Fonts asked for, linked files, objects the kernel cannot show.
++void lcl_PageCheck(::tools::JsonWriter& rJson, SdPage& rPage)
++{
++    std::set<OUString> aFonts;
++    std::vector<std::pair<OUString, bool>> aLinks;
++    std::vector<OUString> aBroken;
++    SdrObjListIter aIter(&rPage, SdrIterMode::DeepNoGroups);
++    while (aIter.IsMore())
++    {
++        SdrObject* pObj = aIter.Next();
++        if (pObj->isAnnotationObject() || pObj->IsEmptyPresObj())
++            continue;
++        if (auto pText = DynCastSdrTextObj(pObj); pText && pText->HasText())
++            lcl_TextFonts(*pText, aFonts);
++        if (auto pGraf = dynamic_cast<SdrGrafObj*>(pObj))
++        {
++            bool bThere = true;
++            if (pGraf->IsLinkedGraphic())
++            {
++                osl::DirectoryItem aItem;
++                bThere = osl::DirectoryItem::get(pGraf->GetFileName(), aItem) == osl::FileBase::E_None;
++                aLinks.emplace_back(pGraf->GetFileName(), !bThere);
++            }
++            // Loads a link; a failed decode leaves the placeholder.
++            const GraphicType eType = pGraf->GetGraphicObject(true).GetType();
++            // A missing link is said once, as a link.
++            if (bThere && (eType == GraphicType::NONE || eType == GraphicType::Default))
++                aBroken.push_back(pObj->GetName());
++        }
++        if (auto pOle = dynamic_cast<SdrOle2Obj*>(pObj))
++        {
++            uno::Reference<embed::XLinkageSupport> xLink(pOle->getEmbeddedObjectRef().GetObject(), uno::UNO_QUERY);
++            if (xLink.is() && xLink->isLink())
++            {
++                osl::DirectoryItem aItem;
++                const OUString aUrl = xLink->getLinkURL();
++                aLinks.emplace_back(aUrl, osl::DirectoryItem::get(aUrl, aItem) != osl::FileBase::E_None);
++            }
++            if (pOle->IsEmpty())
++                aBroken.push_back(pObj->GetName());
++        }
++    }
++    {
++        auto aList = rJson.startArray("fonts");
++        for (const OUString& rFont : aFonts)
++            if (!rFont.isEmpty())
++                rJson.putSimpleValue(rFont);
++    }
++    {
++        auto aList = rJson.startArray("links");
++        for (const auto& [rUrl, bMissing] : aLinks)
++        {
++            auto aOne = rJson.startStruct();
++            rJson.put("url", rUrl);
++            rJson.put("missing", bMissing);
++        }
++    }
++    auto aList = rJson.startArray("broken");
++    for (const OUString& rName : aBroken)
++        rJson.putSimpleValue(rName);
++}
++
++/// Every slide and master, checked before a show.
++void lcl_SlideCheck(::tools::JsonWriter& rJson, SdDrawDocument& rDoc)
++{
++    {
++        auto aList = rJson.startArray("slides");
++        for (sal_uInt16 i = 0; i < rDoc.GetSdPageCount(PageKind::Standard); ++i)
++        {
++            auto aOne = rJson.startStruct();
++            lcl_PageCheck(rJson, *rDoc.GetSdPage(i, PageKind::Standard));
++        }
++    }
++    auto aList = rJson.startArray("masters");
++    for (sal_uInt16 i = 0; i < rDoc.GetMasterSdPageCount(PageKind::Standard); ++i)
++    {
++        SdPage* pMaster = rDoc.GetMasterSdPage(i, PageKind::Standard);
++        auto aOne = rJson.startStruct();
++        rJson.put("name", pMaster->GetName());
++        lcl_PageCheck(rJson, *pMaster);
++    }
++}
++
+ /// Each slide for a show: hidden, notes, motion, media.
+ void lcl_SlideShow(::tools::JsonWriter& rJson, SdDrawDocument& rDoc)
+ {
+@@ -2365,6 +2475,11 @@ void SdXImpressDocument::getCommandValues(::tools::JsonWriter& rJsonWriter, std:
+         lcl_SlideShow(rJsonWriter, *mpDoc);
+         return;
+     }
++    if (rCommand == ".uno:SlideCheck")
++    {
++        lcl_SlideCheck(rJsonWriter, *mpDoc);
++        return;
++    }
+     if (rCommand == ".uno:SlideTransition" || rCommand == ".uno:SlideAnimations")
+     {
+         DrawViewShell* pShell = GetViewShell();

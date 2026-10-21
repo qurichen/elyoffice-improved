@@ -1,0 +1,73 @@
+/* Night: soft greys, never black; the accent stays. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  color: #f5f5f7;
+  background: #252525;
+  --quiet: #c4c2c0;
+}
+
+/* The accent passes 4.5:1 as text only when lighter. */
+:root[data-theme="dark"] {
+  --link: #78a6ee;
+}
+
+/* Faces and words re-tone as the wave reaches them. */
+.waving .face {
+  transition: fill 0.2s ease-out var(--wave, 0s);
+}
+
+.waving :is(h1, h2, h3, p, a, li, button) {
+  transition: color 0.2s ease-out var(--wave, 0s);
+}
+
+.night-sky {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.night {
+  position: fixed;
+  top: 1rem;
+  left: 1.5rem;
+  z-index: 1;
+  padding: 0.25rem;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease-out;
+}
+
+.night .stage {
+  width: 2.5rem;
+  height: auto;
+}
+
+.night:hover,
+.night:focus-visible,
+body:has(.hero:hover) .night {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .night {
+    opacity: 1;
+  }
+}
+
+.night-name {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .night {
+    transition: none;
+  }
+}

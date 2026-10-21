@@ -1,0 +1,91 @@
+.film {
+  display: grid;
+  justify-items: center;
+  gap: 2.5rem;
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 9rem 1.5rem;
+  text-align: center;
+}
+
+.film-stage {
+  position: relative;
+  width: 100%;
+}
+
+.film-stage .stage {
+  width: min(100%, 52rem, calc(78svh * var(--ratio)));
+  margin: 0 auto;
+  transition: opacity 0.3s ease-out;
+}
+
+.film.flat .stage {
+  opacity: 0;
+}
+
+.film .notch {
+  fill: #fff;
+}
+
+.film video {
+  position: absolute;
+  display: block;
+  transform-origin: 0 0;
+  object-fit: fill;
+  background: #000;
+  outline: var(--bezel) solid color-mix(in oklab, #3a3a3c, black 9%);
+  cursor: pointer;
+}
+
+.film.flat video {
+  cursor: auto;
+}
+
+/* The bezel matches the screen's left face at night. */
+:root[data-theme="dark"] .film video:not(:focus-visible) {
+  outline-color: color-mix(in oklab, #303032, black 9%);
+}
+
+.film video:focus-visible {
+  outline-color: var(--accent);
+}
+
+/* The film appears once its screen has landed. */
+.film:not(.seen) video,
+.film:not(.seen) .film-play {
+  visibility: hidden;
+}
+
+.film.seen video {
+  animation: shown 0.2s ease-out var(--shown) backwards;
+}
+
+@keyframes shown {
+  from {
+    opacity: 0;
+  }
+}
+
+.film-play {
+  position: absolute;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: transparent;
+  font-size: 0;
+  cursor: pointer;
+}
+
+.film.flat .film-play {
+  visibility: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .film-stage .stage {
+    transition: none;
+  }
+
+  .film.seen video {
+    animation: none;
+  }
+}

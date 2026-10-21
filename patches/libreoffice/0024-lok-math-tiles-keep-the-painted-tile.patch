@@ -1,0 +1,19 @@
+LOK: the Math in-place helper erased the painted tile
+
+PaintAllInPlaceOnTile resized the tile device with the default erase,
+so every Impress tile painted during text edit came back blank (black on
+macOS). Keep the content, as the chart helper does.
+
+diff --git a/sfx2/source/view/lokstarmathhelper.cxx b/sfx2/source/view/lokstarmathhelper.cxx
+index 78f27b9..ff2becb 100644
+--- a/sfx2/source/view/lokstarmathhelper.cxx
++++ b/sfx2/source/view/lokstarmathhelper.cxx
+@@ -220,7 +220,7 @@ void LokStarMathHelper::PaintAllInPlaceOnTile(VirtualDevice& rDevice, int nOutpu
+     const int nPartForCurView = pCurView->getPart();
+ 
+     // Resizes the virtual device to contain the entries context
+-    rDevice.SetOutputSizePixel({ nOutputWidth, nOutputHeight });
++    rDevice.SetOutputSizePixel({ nOutputWidth, nOutputHeight }, /*bErase*/false);
+ 
+     auto popIt = rDevice.ScopedPush(vcl::PushFlags::MAPMODE);
+     MapMode aMapMode(rDevice.GetMapMode());

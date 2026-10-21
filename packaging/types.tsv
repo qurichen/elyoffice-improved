@@ -1,0 +1,16 @@
+ely-doc	docx	application/vnd.openxmlformats-officedocument.wordprocessingml.document
+ely-doc	odt	application/vnd.oasis.opendocument.text
+ely-doc	doc	application/msword
+ely-doc	rtf	application/rtf
+ely-table	xlsx	application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+ely-table	ods	application/vnd.oasis.opendocument.spreadsheet
+ely-table	xls	application/vnd.ms-excel
+ely-table	csv	text/csv
+ely-table	tsv	text/tab-separated-values
+ely-show	pptx	application/vnd.openxmlformats-officedocument.presentationml.presentation
+ely-show	odp	application/vnd.oasis.opendocument.presentation
+ely-show	ppt	application/vnd.ms-powerpoint
+ely-pdf	pdf	application/pdf
+ely-mark	md	text/markdown
+ely-mark	markdown	text/markdown
+ely-tree	/	inode/directory

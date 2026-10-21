@@ -1,0 +1,28 @@
+oox: a scatter's numeric X values export as numbers
+
+A scatter chart whose X values come from its categories wrote them as
+a string reference (strRef) to PPTX. PowerPoint and LibreOffice read
+string X values as point indices, so X became 1, 2, 3 after a round
+trip. When every category is a number, write a numRef instead.
+
+diff --git a/oox/source/export/chartexport.cxx b/oox/source/export/chartexport.cxx
+index 3947280..03f3d78 100644
+--- a/oox/source/export/chartexport.cxx
++++ b/oox/source/export/chartexport.cxx
+@@ -4066,6 +4066,16 @@ void ChartExport::exportSeriesCategory( const Reference< chart2::data::XDataSequ
+             if (aNumberFormatString.isEmpty())
+                 bWriteDateCategories = false;
+         }
++        // Numeric X values stay numbers.
++        if (nValueType == XML_xVal)
++        {
++            const std::vector<double> aX = lcl_getAllValuesFromSequence(xValueSeq);
++            if (!aX.empty() && std::none_of(aX.begin(), aX.end(), [](double f) { return std::isnan(f); }))
++            {
++                bWriteDateCategories = true;
++                aNumberFormatString = u"General"_ustr;
++            }
++        }
+ 
+         pFS->startElement(FSNS(XML_c, bWriteDateCategories ? XML_numRef : XML_strRef));
+ 

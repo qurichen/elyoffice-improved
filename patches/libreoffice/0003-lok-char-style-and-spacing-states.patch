@@ -1,0 +1,228 @@
+diff --git a/include/sfx2/lokunocmdlist.hxx b/include/sfx2/lokunocmdlist.hxx
+index 34fd3f529..07d653df6 100644
+--- a/include/sfx2/lokunocmdlist.hxx
++++ b/include/sfx2/lokunocmdlist.hxx
+@@ -34,6 +34,7 @@ enum class PayloadType
+     StringOrStrSeqPayload,
+     StrSeqPayload,
+     TableSizePayload,
++    ULSpacingPayload,
+ };
+ 
+ struct KitUnoCommand
+diff --git a/sfx2/source/control/unoctitm.cxx b/sfx2/source/control/unoctitm.cxx
+index ec456a103..cb14e6e6f 100644
+--- a/sfx2/source/control/unoctitm.cxx
++++ b/sfx2/source/control/unoctitm.cxx
+@@ -35,6 +35,7 @@
+ #include <com/sun/star/util/URLTransformer.hpp>
+ #include <com/sun/star/util/XURLTransformer.hpp>
+ #include <com/sun/star/frame/XFrame.hpp>
++#include <com/sun/star/frame/status/UpperLowerMarginScale.hpp>
+ #include <com/sun/star/frame/status/FontHeight.hpp>
+ #include <com/sun/star/frame/status/ItemStatus.hpp>
+ #include <com/sun/star/frame/status/ItemState.hpp>
+@@ -973,6 +974,17 @@ OString StyleApplyPayload(sal_uInt16, SfxViewFrame*, const css::frame::FeatureSt
+     return aEvent.FeatureURL.Complete.toUtf8() + "=" + aTemplate.StyleName.toUtf8();
+ }
+ 
++// Spacing above and below in 1/100 mm: "upper,lower".
++OString ULSpacingPayload(sal_uInt16, SfxViewFrame*, const css::frame::FeatureStateEvent& aEvent,
++                         const SfxPoolItem*)
++{
++    css::frame::status::UpperLowerMarginScale aMargin;
++    if (!(aEvent.State >>= aMargin))
++        return aEvent.FeatureURL.Complete.toUtf8() + "=";
++    return aEvent.FeatureURL.Complete.toUtf8() + "=" + OString::number(aMargin.Upper) + ","
++           + OString::number(aMargin.Lower);
++}
++
+ OString ColorPayload(sal_uInt16, SfxViewFrame*, const css::frame::FeatureStateEvent& aEvent,
+                      const SfxPoolItem*)
+ {
+@@ -1155,6 +1167,7 @@ constexpr auto enumToPayload = frozen::make_unordered_map<PayloadType, PayloadGe
+     { PayloadType::FontNamePayload, FontNamePayload },
+     { PayloadType::FontHeightPayload, FontHeightPayload },
+     { PayloadType::StyleApplyPayload, StyleApplyPayload },
++    { PayloadType::ULSpacingPayload, ULSpacingPayload },
+     { PayloadType::ColorPayload, ColorPayload },
+     { PayloadType::UndoRedoPayload, UndoRedoPayload },
+     { PayloadType::EnabledPayload, EnabledPayload },
+@@ -1230,6 +1243,8 @@ const std::map<std::u16string_view, KitUnoCommand>& GetKitUnoCommandList()
+         { u"FontHeight", { PayloadType::FontHeightPayload, true } },
+ 
+         { u"StyleApply", { PayloadType::StyleApplyPayload, true } },
++        { u"CharStyle", { PayloadType::StyleApplyPayload, true } },
++        { u"ULSpacing", { PayloadType::ULSpacingPayload, true } },
+ 
+         { u"BackColor", { PayloadType::ColorPayload, false } },
+         { u"BackgroundColor", { PayloadType::ColorPayload, true } },
+@@ -1482,6 +1497,16 @@ static void InterceptLOKStateChangeEvent(sal_uInt16 nSID, SfxViewFrame* pViewFra
+         return;
+     }
+ 
++    // Mixed selections report don't-care, not a made-up value.
++    css::frame::status::ItemStatus aStatus;
++    if ((aEvent.State >>= aStatus) && aStatus.State == css::frame::status::ItemState::DONT_CARE)
++    {
++        pViewShell->libreOfficeKitViewCallback(
++            LOK_CALLBACK_STATE_CHANGED,
++            "{\"commandName\":\"" + aEvent.FeatureURL.Complete.toUtf8() + "\",\"dontcare\":true}");
++        return;
++    }
++
+     auto payloadIter = enumToPayload.find(handler->second.payloadType);
+     PayloadGetter_t pFunct = payloadIter != enumToPayload.end() ? payloadIter->second : nullptr;
+     if (pFunct != nullptr)
+diff --git a/sw/source/core/txtnode/thints.cxx b/sw/source/core/txtnode/thints.cxx
+index b4e02d48b..9beb188b3 100644
+--- a/sw/source/core/txtnode/thints.cxx
++++ b/sw/source/core/txtnode/thints.cxx
+@@ -27,6 +27,7 @@
+ #include <editeng/nhypitem.hxx>
+ #include <osl/diagnose.h>
+ #include <svl/whiter.hxx>
++#include <comphelper/lok.hxx>
+ #include <svl/itemiter.hxx>
+ #include <editeng/charhiddenitem.hxx>
+ #include <editeng/langitem.hxx>
+@@ -2288,9 +2289,9 @@ bool SwTextNode::GetParaAttr(SfxItemSet& rSet, sal_Int32 nStt, sal_Int32 nEnd,
+ 
+                     const sal_Int32 nHintEnd = *pAttrEnd;
+ 
+-                    for (; pItem; pItem = oItemIter ? oItemIter->NextItem() : nullptr)
++                    auto lcl_Check = [&](const SfxPoolItem* pCheck)
+                     {
+-                        const sal_uInt16 nHintWhich = pItem->Which();
++                        const sal_uInt16 nHintWhich = pCheck->Which();
+                         OSL_ENSURE(!isUNKNOWNATR(nHintWhich),
+                                 "SwTextNode::GetAttr(): unknown attribute?");
+ 
+@@ -2314,7 +2315,7 @@ bool SwTextNode::GetParaAttr(SfxItemSet& rSet, sal_Int32 nStt, sal_Int32 nEnd,
+                         {
+                             if( !pPrev->mpItem )
+                             {
+-                                if ( bOnlyTextAttr || *pItem != aFormatSet.Get( nHintWhich ) )
++                                if ( bOnlyTextAttr || *pCheck != aFormatSet.Get( nHintWhich ) )
+                                 {
+                                     if( nAttrStart > nStt )
+                                     {
+@@ -2323,18 +2324,18 @@ bool SwTextNode::GetParaAttr(SfxItemSet& rSet, sal_Int32 nStt, sal_Int32 nEnd,
+                                     }
+                                     else
+                                     {
+-                                        pPrev->mpItem = pItem;
++                                        pPrev->mpItem = pCheck;
+                                         pPrev->mnEndPos = nHintEnd;
+                                     }
+                                 }
+                             }
+                             else if( !IsInvalidItem(pPrev->mpItem) )
+                             {
+-                                if( pPrev->mnEndPos == nAttrStart &&
+-                                    *pPrev->mpItem == *pItem )
++                                if( nAttrStart <= pPrev->mnEndPos &&
++                                    *pPrev->mpItem == *pCheck )
+                                 {
+-                                    pPrev->mpItem = pItem;
+-                                    pPrev->mnEndPos = nHintEnd;
++                                    pPrev->mpItem = pCheck;
++                                    pPrev->mnEndPos = std::max(pPrev->mnEndPos, nHintEnd);
+                                 }
+                                 else
+                                 {
+@@ -2343,7 +2344,27 @@ bool SwTextNode::GetParaAttr(SfxItemSet& rSet, sal_Int32 nStt, sal_Int32 nEnd,
+                                 }
+                             }
+                         }
+-                    } // end while
++                    };
++                    for (; pItem; pItem = oItemIter ? oItemIter->NextItem() : nullptr)
++                        lcl_Check(pItem);
++                    // LOK: char style attributes can be ambiguous too.
++                    if (bGetFromChrFormat && comphelper::LibreOfficeKit::isActive()
++                        && RES_TXTATR_CHARFMT == pHt->Which())
++                    {
++                        if (const SfxItemSet* pChrSet = CharFormat::GetItemSet(pHt->GetAttr()))
++                        {
++                            SfxWhichIter aIter(*pChrSet);
++                            for (sal_uInt16 nWhich = aIter.FirstWhich(); nWhich;
++                                 nWhich = aIter.NextWhich())
++                            {
++                                const SfxPoolItem* pChrItem = nullptr;
++                                if (isCHRATR(nWhich)
++                                    && SfxItemState::SET
++                                           == pChrSet->GetItemState(nWhich, true, &pChrItem))
++                                    lcl_Check(pChrItem);
++                            }
++                        }
++                    }
+                 }
+             }
+ 
+diff --git a/sw/source/uibase/app/docst.cxx b/sw/source/uibase/app/docst.cxx
+index 4678df9fc..1b5d9e004 100644
+--- a/sw/source/uibase/app/docst.cxx
++++ b/sw/source/uibase/app/docst.cxx
+@@ -90,9 +90,29 @@
+ #include <svl/ptitem.hxx>
+ #include <editeng/sizeitem.hxx>
+ #include <editeng/ulspitem.hxx>
++#include <comphelper/lok.hxx>
++#include <ndtxt.hxx>
++#include <pam.hxx>
++#include <txtfrm.hxx>
+ 
+ using namespace ::com::sun::star;
+ 
++// LOK: whether the selection spans paragraph styles.
++static bool lcl_MixedColl(SwWrtShell& rShell, const SwTextFormatColl& rColl)
++{
++    for (SwPaM& rPaM : rShell.GetCursor()->GetRingContainer())
++    {
++        for (SwNodeOffset n = rPaM.Start()->GetNodeIndex(); n <= rPaM.End()->GetNodeIndex(); ++n)
++        {
++            SwNode* pNode = rShell.GetDoc()->GetNodes()[n];
++            if (pNode->IsTextNode()
++                && sw::GetParaPropsNode(*rShell.GetLayout(), *pNode)->GetTextColl() != &rColl)
++                return true;
++        }
++    }
++    return false;
++}
++
+ static OutlinerView* lcl_GetPostItOutlinerView(SwWrtShell& rShell)
+ {
+     SwPostItMgr* pPostItMgr = rShell.GetPostItMgr();
+@@ -156,6 +176,12 @@ void  SwDocShell::StateStyleSheet(SfxItemSet& rSet, SwWrtShell* pSh)
+                 else
+                 {
+                     SwTextFormatColl* pColl = pShell->GetCurTextFormatColl();
++                    if (pColl && comphelper::LibreOfficeKit::isActive()
++                        && lcl_MixedColl(*pShell, *pColl))
++                    {
++                        rSet.InvalidateItem(nWhich);
++                        break;
++                    }
+                     if(pColl)
+                         aName = pColl->GetName();
+                 }
+@@ -168,6 +194,18 @@ void  SwDocShell::StateStyleSheet(SfxItemSet& rSet, SwWrtShell* pSh)
+                     SwCharFormat* pFormat = pShell->GetCurCharFormat();
+                     if(pFormat)
+                         aName = pFormat->GetName();
++                    else if (comphelper::LibreOfficeKit::isActive())
++                    {
++                        // LOK: mixed is don't-care, none is empty.
++                        SfxItemSetFixed<RES_TXTATR_CHARFMT, RES_TXTATR_CHARFMT> aSet(
++                            pShell->GetAttrPool());
++                        pShell->GetCurAttr(aSet);
++                        if (aSet.GetItemState(RES_TXTATR_CHARFMT, false) == SfxItemState::INVALID)
++                        {
++                            rSet.InvalidateItem(nWhich);
++                            break;
++                        }
++                    }
+                     else
+                         aName = UIName(SwResId(STR_POOLCHR_STANDARD));
+                     rSet.Put(SfxTemplateItem(nWhich, aName.toString()));

@@ -1,0 +1,247 @@
+diff --git a/sd/inc/unomodel.hxx b/sd/inc/unomodel.hxx
+index 95cfafc..10b0013 100644
+--- a/sd/inc/unomodel.hxx
++++ b/sd/inc/unomodel.hxx
+@@ -297,6 +297,8 @@ public:
+     SD_DLLPUBLIC OString getViewRenderState(SfxViewShell* pViewShell = nullptr) override;
+ 
+     SD_DLLPUBLIC virtual void getCommandValues(tools::JsonWriter& rJsonWriter, std::string_view rCommand) override;
++    /// @see vcl::ITiledRenderable::supportsCommand().
++    SD_DLLPUBLIC virtual bool supportsCommand(std::u16string_view rCommand) override;
+ 
+     /// @see vcl::ITiledRenderable::getPresentationInfo().
+     SD_DLLPUBLIC OString getPresentationInfo(bool bAllyState = false) const override;
+diff --git a/sd/sdi/sdraw.sdi b/sd/sdi/sdraw.sdi
+index 165a56f..38859c6 100644
+--- a/sd/sdi/sdraw.sdi
++++ b/sd/sdi/sdraw.sdi
+@@ -2757,7 +2757,7 @@ SfxVoidItem ClearUndoStack SID_CLEAR_UNDO_STACK
+ ]
+ 
+ SfxVoidItem PresentationLayout SID_PRESENTATION_LAYOUT
+-()
++(SfxStringItem Master FN_PARAM_1)
+ [
+     AutoUpdate = FALSE,
+     FastCall = FALSE,
+diff --git a/sd/source/ui/func/undopage.cxx b/sd/source/ui/func/undopage.cxx
+index 174747b..2a808a8 100644
+--- a/sd/source/ui/func/undopage.cxx
++++ b/sd/source/ui/func/undopage.cxx
+@@ -19,12 +19,28 @@
+ 
+ #include <undopage.hxx>
+ #include <sdpage.hxx>
++#include <drawdoc.hxx>
++#include <unomodel.hxx>
++#include <comphelper/lok.hxx>
++#include <sfx2/lokhelper.hxx>
+ 
+ 
+ SdPageFormatUndoAction::~SdPageFormatUndoAction()
+ {
+ }
+ 
++namespace
++{
++/// LOK clients read a slide's size only when told.
++void lcl_NotifySize(SdPage& rPage)
++{
++    if (comphelper::LibreOfficeKit::isActive() && !rPage.IsMasterPage()
++        && rPage.GetPageKind() == PageKind::Standard)
++        SfxLokHelper::notifyDocumentSizeChangedAllViews(
++            static_cast<SdDrawDocument&>(rPage.getSdrModelFromSdrPage()).getUnoModel());
++}
++}
++
+ void SdPageFormatUndoAction::Undo()
+ {
+     ::tools::Rectangle aOldBorderRect(mnOldLeft, mnOldUpper, mnOldRight, mnOldLower);
+@@ -40,7 +56,7 @@ void SdPageFormatUndoAction::Undo()
+     mpPage->SetBackgroundFullSize( mbOldFullSize );
+     if( !mpPage->IsMasterPage() )
+         static_cast<SdPage&>( mpPage->TRG_GetMasterPage() ).SetBackgroundFullSize( mbOldFullSize );
+-
++    lcl_NotifySize(*mpPage);
+ }
+ 
+ void SdPageFormatUndoAction::Redo()
+@@ -58,7 +74,7 @@ void SdPageFormatUndoAction::Redo()
+     mpPage->SetBackgroundFullSize( mbNewFullSize );
+     if( !mpPage->IsMasterPage() )
+         static_cast<SdPage&>( mpPage->TRG_GetMasterPage() ).SetBackgroundFullSize( mbNewFullSize );
+-
++    lcl_NotifySize(*mpPage);
+ }
+ 
+ SdPageLRUndoAction::~SdPageLRUndoAction()
+diff --git a/sd/source/ui/unoidl/unomodel.cxx b/sd/source/ui/unoidl/unomodel.cxx
+index ea6ce5b..f47b443 100644
+--- a/sd/source/ui/unoidl/unomodel.cxx
++++ b/sd/source/ui/unoidl/unomodel.cxx
+@@ -189,6 +189,8 @@
+ #include <controller/SlsPageSelector.hxx>
+ 
+ #include <app.hrc>
++#include <svx/ColorSets.hxx>
++#include <docmodel/theme/Theme.hxx>
+ 
+ using namespace ::cppu;
+ using namespace ::com::sun::star;
+@@ -2042,9 +2044,44 @@ void SdXImpressDocument::Notify( SfxBroadcaster& rBC, const SfxHint& rHint )
+     SfxBaseModel::Notify( rBC, rHint );
+ }
+ 
++bool SdXImpressDocument::supportsCommand(std::u16string_view rCommand)
++{
++    return rCommand == u"SlideDesign";
++}
++
++namespace
++{
++/// Masters, color sets, and the shown slide's design.
++void lcl_SlideDesign(::tools::JsonWriter& rJson, SdDrawDocument& rDoc, sd::DrawViewShell& rShell)
++{
++    SdPage* pPage = rShell.GetActualPage();
++    const SdPage& rMaster = pPage->IsMasterPage() ? *pPage : static_cast<const SdPage&>(pPage->TRG_GetMasterPage());
++    {
++        auto aMasters = rJson.startArray("masters");
++        for (sal_uInt16 i = 0; i < rDoc.GetMasterSdPageCount(PageKind::Standard); ++i)
++            rJson.putSimpleValue(rDoc.GetMasterSdPage(i, PageKind::Standard)->GetName());
++    }
++    rJson.put("master", rMaster.GetName());
++    rJson.put("masterView", rShell.GetEditMode() == EditMode::MasterPage);
++    rJson.put("layout", static_cast<sal_Int32>(pPage->GetAutoLayout()));
++    const auto& pTheme = rMaster.getSdrPageProperties().getTheme();
++    const auto pSet = pTheme ? pTheme->getColorSet() : nullptr;
++    rJson.put("theme", pSet ? pSet->getName() : OUString());
++    auto aThemes = rJson.startArray("themes");
++    for (const model::ColorSet& rSet : svx::ColorSets::get().getColorSetVector())
++        rJson.putSimpleValue(rSet.getName());
++}
++}
++
+ void SdXImpressDocument::getCommandValues(::tools::JsonWriter& rJsonWriter, std::string_view rCommand)
+ {
+     static constexpr OStringLiteral aExtractDocStructure(".uno:ExtractDocumentStructure");
++    if (rCommand == ".uno:SlideDesign")
++    {
++        if (auto pShell = dynamic_cast<sd::DrawViewShell*>(mpDocShell->GetViewShell()))
++            lcl_SlideDesign(rJsonWriter, *mpDoc, *pShell);
++        return;
++    }
+ 
+     std::map<OUString, OUString> aMap
+         = SfxLokHelper::parseCommandParameters(OUString::fromUtf8(rCommand));
+diff --git a/sd/source/ui/view/drviews2.cxx b/sd/source/ui/view/drviews2.cxx
+index d0b3ead..b1f1461 100644
+--- a/sd/source/ui/view/drviews2.cxx
++++ b/sd/source/ui/view/drviews2.cxx
+@@ -210,6 +210,8 @@
+ #include <boost/property_tree/json_parser.hpp>
+ #include <rtl/uri.hxx>
+ #include <editeng/editeng.hxx>
++#include <svx/ColorSets.hxx>
++#include "../sidebar/DocumentHelper.hxx"
+ 
+ 
+ using namespace ::com::sun::star;
+@@ -1561,8 +1563,13 @@ void DrawViewShell::FuTemporary(SfxRequest& rReq)
+ 
+                 Size aSize (pWidth->GetValue (), pHeight->GetValue ());
+ 
+-                SetupPage (aSize, 0, 0, 0, 0, true, false, pScaleAll->GetValue ());
+-                rReq.Ignore ();
++                // The dialog's path: one undo step, orientation follows.
++                SdPage* pPage = GetActualPage();
++                SdPage* pMaster = pPage->IsMasterPage() ? pPage : &static_cast<SdPage&>(pPage->TRG_GetMasterPage());
++                SetPageSizeAndBorder(GetPageKind(), aSize, -1, -1, -1, -1, pScaleAll->GetValue(),
++                                     aSize.Width() >= aSize.Height() ? Orientation::Landscape : Orientation::Portrait,
++                                     pPage->GetPaperBin(), pMaster->IsBackgroundFullSize());
++                rReq.Done ();
+                 break;
+             }
+ #if HAVE_FEATURE_SCRIPTING
+@@ -2188,6 +2195,24 @@ void DrawViewShell::FuTemporary(SfxRequest& rReq)
+ 
+         case SID_PRESENTATION_LAYOUT:
+         {
++            // A kit client names the master for this slide.
++            if (const SfxStringItem* pName = rReq.GetArg<SfxStringItem>(FN_PARAM_1))
++            {
++                SdPage* pMaster = nullptr;
++                for (sal_uInt16 i = 0; i < GetDoc()->GetMasterSdPageCount(PageKind::Standard); ++i)
++                    if (GetDoc()->GetMasterSdPage(i, PageKind::Standard)->GetName() == pName->GetValue())
++                        pMaster = GetDoc()->GetMasterSdPage(i, PageKind::Standard);
++                SdPage* pPage = GetActualPage();
++                if (!pMaster || pPage->IsMasterPage())
++                {
++                    rReq.Ignore();
++                    break;
++                }
++                auto pPages = std::make_shared<std::vector<SdPage*>>(1, pPage);
++                sidebar::DocumentHelper::AssignMasterPageToPageList(*GetDoc(), pMaster, pPages);
++                rReq.Done();
++                break;
++            }
+             SetCurrentFunction( FuPresentationLayout::Create(*this, GetActiveWindow(), mpDrawView.get(), *GetDoc(), rReq) );
+             Cancel();
+         }
+@@ -4237,6 +4262,20 @@ void DrawViewShell::FuTemporary(SfxRequest& rReq)
+         case SID_THEME_DIALOG:
+         {
+             SdrPage* pMasterPage = &GetActualPage()->TRG_GetMasterPage();
++            // A kit client names the color set.
++            if (const SfxStringItem* pName = rReq.GetArg<SfxStringItem>(FN_PARAM_1))
++            {
++                const model::ColorSet* pSet = svx::ColorSets::get().getColorSet(pName->GetValue());
++                if (!pSet)
++                {
++                    rReq.Ignore();
++                    break;
++                }
++                sd::ThemeColorChanger aChanger(pMasterPage, GetDocSh());
++                aChanger.apply(std::make_shared<model::ColorSet>(*pSet));
++                rReq.Done();
++                break;
++            }
+             auto pTheme = pMasterPage->getSdrPageProperties().getTheme();
+             auto pDialog = std::make_shared<svx::ThemeDialog>(GetFrameWeld(), pTheme.get());
+             auto* pDocShell = GetDocSh();
+diff --git a/sd/source/ui/view/viewshe2.cxx b/sd/source/ui/view/viewshe2.cxx
+index a883dfa..4c16936 100644
+--- a/sd/source/ui/view/viewshe2.cxx
++++ b/sd/source/ui/view/viewshe2.cxx
+@@ -61,6 +61,8 @@
+ #include <svtools/soerr.hxx>
+ #include <svx/charthelper.hxx>
+ #include <comphelper/lok.hxx>
++#include <sfx2/lokhelper.hxx>
++#include <unomodel.hxx>
+ 
+ using namespace com::sun::star;
+ 
+@@ -562,6 +564,10 @@ void ViewShell::SetPageSizeAndBorder(PageKind ePageKind, const Size& rNewSize,
+         pViewShell->GetViewFrame().GetObjectShell()->GetUndoManager()->AddUndoAction(std::move(pUndoGroup));
+     }
+ 
++    // LOK clients read the size only when told.
++    if (comphelper::LibreOfficeKit::isActive())
++        SfxLokHelper::notifyDocumentSizeChangedAllViews(GetDoc()->getUnoModel());
++
+     // calculate View-Sizes
+     SdPage* pPage(0 != nPageCnt
+         ? GetDoc()->GetSdPage(0, ePageKind)
+diff --git a/svx/sdi/svx.sdi b/svx/sdi/svx.sdi
+index 9c81bb0..2cc2a87 100644
+--- a/svx/sdi/svx.sdi
++++ b/svx/sdi/svx.sdi
+@@ -13278,7 +13278,7 @@ SfxVoidItem GraphicSizeCheck SID_GRAPHIC_SIZE_CHECK
+ ]
+ 
+ SfxVoidItem ThemeDialog SID_THEME_DIALOG
+-()
++(SfxStringItem ColorSet FN_PARAM_1)
+ [
+     AutoUpdate = FALSE,
+     FastCall = FALSE,

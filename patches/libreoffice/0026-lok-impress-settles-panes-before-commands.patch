@@ -1,0 +1,74 @@
+LOK: Impress applies queued pane changes before a command
+
+Impress queues pane reconfiguration in user events. A LOK command that
+arrives first finds the slide sorter shell off the dispatcher stack, and
+slots it serves (hide, show) are dropped without a trace. A new
+ITiledRenderable::settleViews runs before dispatch; Impress drains its
+configuration queue there.
+
+diff --git a/desktop/source/lib/init.cxx b/desktop/source/lib/init.cxx
+index 12f51b1..76a0212 100644
+--- a/desktop/source/lib/init.cxx
++++ b/desktop/source/lib/init.cxx
+@@ -5659,6 +5659,8 @@ static void doc_postUnoCommand(LibreOfficeKitDocument* pThis, const char* pComma
+             return;
+         }
+     }
++    if (ITiledRenderable* pDoc = getTiledRenderable(pThis))
++        pDoc->settleViews();
+     bool bResult = false;
+     // Dispatch to this document's frame, not the desktop's active one.
+     uno::Reference<frame::XFrame> xFrame = pViewShell->GetViewFrame().GetFrame().GetFrameInterface();
+diff --git a/include/vcl/ITiledRenderable.hxx b/include/vcl/ITiledRenderable.hxx
+index 1adcc3b..67eb24f 100644
+--- a/include/vcl/ITiledRenderable.hxx
++++ b/include/vcl/ITiledRenderable.hxx
+@@ -379,6 +379,9 @@ public:
+      */
+     virtual void setPaintTextEdit(bool) {}
+ 
++    /// Applies view changes still queued, before a LOK command.
++    virtual void settleViews() {}
++
+     /// Decides if it's OK to call getCommandValues(rCommand).
+     virtual bool supportsCommand(std::u16string_view /*rCommand*/) { return false; }
+ 
+diff --git a/sd/inc/unomodel.hxx b/sd/inc/unomodel.hxx
+index 10b0013..91b55d0 100644
+--- a/sd/inc/unomodel.hxx
++++ b/sd/inc/unomodel.hxx
+@@ -293,6 +293,8 @@ public:
+     }
+     /// @see vcl::ITiledRenderable::setPaintTextEdit().
+     virtual void setPaintTextEdit(bool bPaint) override { mbPaintTextEdit = bPaint; }
++    /// @see vcl::ITiledRenderable::settleViews().
++    virtual void settleViews() override;
+     /// @see vcl::ITiledRenderable::getViewRenderState().
+     SD_DLLPUBLIC OString getViewRenderState(SfxViewShell* pViewShell = nullptr) override;
+ 
+diff --git a/sd/source/ui/unoidl/unomodel.cxx b/sd/source/ui/unoidl/unomodel.cxx
+index aa4d8de..d86deef 100644
+--- a/sd/source/ui/unoidl/unomodel.cxx
++++ b/sd/source/ui/unoidl/unomodel.cxx
+@@ -127,6 +127,7 @@
+ #include <xmloff/xmlgrhlp.hxx>
+ #include <DrawDocShell.hxx>
+ #include <ViewShellBase.hxx>
++#include <framework/FrameworkHelper.hxx>
+ #include "UnoDocumentSettings.hxx"
+ 
+ #include <Annotation.hxx>
+@@ -3883,6 +3884,13 @@ DrawViewShell* SdXImpressDocument::GetViewShell()
+     return pViewSh;
+ }
+ 
++void SdXImpressDocument::settleViews()
++{
++    // Pane changes are queued; their shells serve the slots.
++    if (DrawViewShell* pViewSh = GetViewShell())
++        sd::framework::FrameworkHelper::Instance(pViewSh->GetViewShellBase())->RequestSynchronousUpdate();
++}
++
+ void SdXImpressDocument::paintTile( VirtualDevice& rDevice,
+                             int nOutputWidth, int nOutputHeight,
+                             int nTilePosX, int nTilePosY,

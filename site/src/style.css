@@ -1,0 +1,198 @@
+:root {
+  color-scheme: light;
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC", sans-serif;
+  color: #1d1d1f;
+  --page: #fbfbfa;
+  background: var(--page);
+  --quiet: #6e6e73;
+  --accent: #3d7fe5;
+  --link: #2a6ad0;
+}
+
+body {
+  margin: 0;
+}
+
+h1,
+h2 {
+  margin: 0;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+h1 {
+  font-size: clamp(3rem, 9vw, 6.5rem);
+}
+
+h2 {
+  font-size: clamp(2rem, 5vw, 3.5rem);
+}
+
+p {
+  margin: 0;
+  font-size: clamp(1.0625rem, 1.6vw, 1.3125rem);
+  font-weight: 300;
+  line-height: 1.5;
+  color: var(--quiet);
+}
+
+a {
+  color: var(--link);
+  text-decoration: none;
+}
+
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 2px;
+}
+
+.hero {
+  display: grid;
+  justify-items: center;
+  gap: 1.25rem;
+  padding: 7rem 1.5rem 0;
+  text-align: center;
+}
+
+.hero a {
+  font-size: 1.0625rem;
+}
+
+.hero .links {
+  display: flex;
+  align-items: baseline;
+  gap: 1.5rem;
+}
+
+a.icon svg {
+  height: 1em;
+  width: auto;
+  margin-inline-end: 0.35em;
+  vertical-align: -0.125em;
+}
+
+.stage {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.model {
+  position: relative;
+  max-width: 100%;
+}
+
+.props {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4rem;
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 9rem 1.5rem;
+}
+
+.prop {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  justify-items: center;
+  align-items: end;
+  gap: 2rem;
+  text-align: center;
+}
+
+footer {
+  display: grid;
+  justify-items: center;
+  gap: 1rem;
+  padding: 9rem 1.5rem 12rem;
+  text-align: center;
+}
+
+footer ul {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 1rem 2.5rem;
+  margin: 2rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 1.0625rem;
+}
+
+.lang {
+  position: fixed;
+  top: 1.5rem;
+  right: 1.5rem;
+  z-index: 1;
+  padding: 0.5rem 0.75rem;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.9375rem;
+  font-weight: 300;
+  color: var(--quiet);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease-out;
+}
+
+.lang:hover,
+.lang:focus-visible,
+body:has(.hero:hover) .lang {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .lang {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 760px) {
+  .props {
+    grid-template-columns: 1fr;
+    gap: 3rem;
+    padding: 6rem 1.5rem;
+  }
+
+  .hero {
+    padding-top: 5rem;
+  }
+}
+
+.caption {
+  position: absolute;
+  margin: 0;
+  translate: -50% -100%;
+  font-size: 0.9375rem;
+  font-weight: 300;
+  color: var(--quiet);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease-out;
+}
+
+.caption.shown {
+  opacity: 1;
+}
+
+/* Keyboard and reader links; focus shows on the model. */
+.doors a {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .caption,
+  .lang {
+    transition: none;
+  }
+}

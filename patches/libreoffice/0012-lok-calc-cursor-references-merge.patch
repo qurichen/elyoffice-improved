@@ -1,0 +1,165 @@
+--- a/sc/inc/docuno.hxx
++++ b/sc/inc/docuno.hxx
+@@ -325,6 +325,12 @@
+     /// @see vcl::ITiledRenderable::getPartInfo().
+     virtual OUString getPartInfo( int nPart ) override;
+ 
++    /// @see vcl::ITiledRenderable::supportsCommand().
++    bool supportsCommand(std::u16string_view rCommand) override;
++
++    /// @see vcl::ITiledRenderable::getCommandValues().
++    void getCommandValues(tools::JsonWriter& rJsonWriter, std::string_view rCommand) override;
++
+     /// @see vcl::ITiledRenderable::getPartName().
+     virtual OUString getPartName(int nPart) override;
+ 
+--- a/sc/source/ui/unoobj/docuno.cxx
++++ b/sc/source/ui/unoobj/docuno.cxx
+@@ -93,6 +93,11 @@
+ 
+ #include <cellsuno.hxx>
+ #include <columnspanset.hxx>
++#include <dociter.hxx>
++#include <o3tl/string_view.hxx>
++#include <formulacell.hxx>
++#include <rangenam.hxx>
++#include <tokenarray.hxx>
+ #include <convuno.hxx>
+ #include <datauno.hxx>
+ #include <docfunc.hxx>
+@@ -644,6 +649,100 @@
+ {
+     ScViewData* pViewData = ScDocShell::GetViewData();
+     return pViewData ? pViewData->GetViewShell()->getPart() : 0;
++}
++
++namespace
++{
++/// Whether rCode at rPos refers to sheet nTab.
++bool lcl_RefersToTab(const ScDocument& rDoc, const ScTokenArray& rCode, const ScAddress& rPos,
++                     SCTAB nTab)
++{
++    for (const formula::FormulaToken* pToken : rCode.References())
++    {
++        if (pToken->GetType() == formula::svSingleRef
++            && pToken->GetSingleRef()->toAbs(rDoc, rPos).Tab() == nTab)
++            return true;
++        if (pToken->GetType() == formula::svDoubleRef)
++        {
++            const ScRange aRange = pToken->GetDoubleRef()->toAbs(rDoc, rPos);
++            if (aRange.aStart.Tab() <= nTab && nTab <= aRange.aEnd.Tab())
++                return true;
++        }
++    }
++    return false;
++}
++
++/// Whether rCode finds its target only when it runs.
++bool lcl_IsDynamic(const ScTokenArray& rCode)
++{
++    formula::FormulaTokenArrayPlainIterator aIter(rCode);
++    for (const formula::FormulaToken* pToken = aIter.First(); pToken; pToken = aIter.Next())
++        if (pToken->GetOpCode() == ocIndirect)
++            return true;
++    return false;
++}
++}
++
++bool ScModelObj::supportsCommand(std::u16string_view rCommand)
++{
++    return rCommand == u"SheetReferences";
++}
++
++void ScModelObj::getCommandValues(tools::JsonWriter& rJsonWriter, std::string_view rCommand)
++{
++    if (!pDocShell || !o3tl::starts_with(rCommand, ".uno:SheetReferences"))
++        return;
++    std::map<OUString, OUString> aMap
++        = SfxLokHelper::parseCommandParameters(OUString::fromUtf8(rCommand));
++    const auto aSheet = aMap.find(u"sheet"_ustr);
++    if (aSheet == aMap.end())
++        return;
++    ScDocument& rDoc = pDocShell->GetDocument();
++    const SCTAB nTab = aSheet->second.toInt32();
++    sal_Int64 nFormulas = 0;
++    sal_Int64 nDynamic = 0;
++    OUString aFirst;
++    for (SCTAB nOther = 0; nOther < rDoc.GetTableCount(); ++nOther)
++    {
++        if (nOther == nTab)
++            continue;
++        ScCellIterator aIter(rDoc, ScRange(0, 0, nOther, rDoc.MaxCol(), rDoc.MaxRow(), nOther));
++        for (bool bHas = aIter.first(); bHas; bHas = aIter.next())
++        {
++            if (aIter.getType() != CELLTYPE_FORMULA)
++                continue;
++            const ScTokenArray& rCode = *aIter.getFormulaCell()->GetCode();
++            if (lcl_IsDynamic(rCode))
++                ++nDynamic;
++            if (!lcl_RefersToTab(rDoc, rCode, aIter.GetPos(), nTab))
++                continue;
++            if (!nFormulas++)
++                aFirst = aIter.GetPos().Format(ScRefFlags::VALID | ScRefFlags::TAB_3D, &rDoc);
++        }
++    }
++    sal_Int64 nNames = 0;
++    auto aCount = [&rDoc, &nNames, &nDynamic, nTab](const ScRangeName* pNames) {
++        if (!pNames)
++            return;
++        for (const auto& [rName, pData] : *pNames)
++        {
++            if (!pData->GetCode())
++                continue;
++            if (lcl_IsDynamic(*pData->GetCode()))
++                ++nDynamic;
++            if (lcl_RefersToTab(rDoc, *pData->GetCode(), pData->GetPos(), nTab))
++                ++nNames;
++        }
++    };
++    aCount(rDoc.GetRangeName());
++    for (SCTAB nOther = 0; nOther < rDoc.GetTableCount(); ++nOther)
++        if (nOther != nTab)
++            aCount(rDoc.GetRangeName(nOther));
++    rJsonWriter.put("commandName", ".uno:SheetReferences");
++    rJsonWriter.put("formulas", nFormulas);
++    rJsonWriter.put("names", nNames);
++    rJsonWriter.put("dynamic", nDynamic);
++    rJsonWriter.put("first", aFirst);
+ }
+ 
+ OUString ScModelObj::getPartInfo( int nPart )
+--- a/sc/source/ui/view/cellsh3.cxx
++++ b/sc/source/ui/view/cellsh3.cxx
+@@ -985,6 +985,8 @@
+                     {
+                         assert(dynamic_cast<const SfxBoolItem*>( pItem) && "wrong item");
+                         bMoveContents = static_cast<const SfxBoolItem*>(pItem)->GetValue();
++                        // The caller chose; no dialog.
++                        bApi = true;
+                     }
+ 
+                     pTabViewShell->MergeCells( bApi, bMoveContents, bCenter, nSlot );
+--- a/sc/source/ui/view/tabvwshc.cxx	2026-10-04 15:03:50
++++ b/sc/source/ui/view/tabvwshc.cxx	2026-10-04 15:04:20
+@@ -461,6 +461,10 @@
+ 
+     UpdateInputHandler(true, false);
+ 
++    // The cell cursor predates the callback.
++    if (ScGridWindow* pWin = GetViewData().GetActiveWin())
++        pWin->notifyKitCellCursor();
++
+     ScInputHandler* pHdl = mpInputHandler ? mpInputHandler.get() : ScModule::get()->GetInputHdl();
+     if (pHdl)
+     {
+--- a/sc/source/ui/view/viewfun2.cxx
++++ b/sc/source/ui/view/viewfun2.cxx
+@@ -1313,6 +1313,8 @@
+                 // else cancelled
+             });
+         }
++        else
++            doMerge(bDoContents, bEmptyMergedCells);
+     } else
+         doMerge(bDoContents, bEmptyMergedCells);
+ }

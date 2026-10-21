@@ -1,0 +1,499 @@
+LOK: Impress transitions and animations without the sidebar
+
+.uno:SetSlideTransition takes a JSON transition (preset, duration,
+click or auto with a time, all slides); .uno:AddAnimation adds a preset
+to the marked objects; .uno:ChangeAnimation sets an effect's start,
+duration, delay, place or removal. Each is one undo step; a JSON that
+does not fit, or a preset the kernel lacks, changes nothing. Reads:
+.uno:SlideTransition, and .uno:SlideAnimations with each effect's
+target in .uno:SlideObjects order and its slideshow layer hash.
+
+diff --git a/sd/Library_sd.mk b/sd/Library_sd.mk
+index d1bf7fc..f29e8f2 100644
+--- a/sd/Library_sd.mk
++++ b/sd/Library_sd.mk
+@@ -492,6 +492,7 @@ $(eval $(call gb_Library_add_exception_objects,sd,\
+ 	sd/source/ui/view/drviewsc \
+ 	sd/source/ui/view/drviewsd \
+ 	sd/source/ui/view/drviewse \
++	sd/source/ui/view/drviewskit \
+ 	sd/source/ui/view/drviewsf \
+ 	sd/source/ui/view/drviewsg \
+ 	sd/source/ui/view/drviewsh \
+diff --git a/sd/inc/app.hrc b/sd/inc/app.hrc
+index 1944bbe..548a95e 100644
+--- a/sd/inc/app.hrc
++++ b/sd/inc/app.hrc
+@@ -427,5 +427,8 @@
+ 
+ #define FN_TRANSFORM_DOCUMENT_STRUCTURE     (SID_SD_START+452)
+ #define SID_SLIDE_NOTES                     (SID_SD_START+453)
++#define SID_SLIDE_TRANSITION_SET            (SID_SD_START+454)
++#define SID_SLIDE_ANIMATION_ADD             (SID_SD_START+455)
++#define SID_SLIDE_ANIMATION_CHANGE          (SID_SD_START+456)
+ 
+ /* vim:set shiftwidth=4 softtabstop=4 expandtab: */
+diff --git a/sd/sdi/_drvwsh.sdi b/sd/sdi/_drvwsh.sdi
+index cf3acd6..c903f04 100644
+--- a/sd/sdi/_drvwsh.sdi
++++ b/sd/sdi/_drvwsh.sdi
+@@ -3038,6 +3038,21 @@ interface DrawView
+         ExecMethod = FuTemporary ;
+         StateMethod = GetMenuState;
+     ]
++    SID_SLIDE_TRANSITION_SET
++    [
++        ExecMethod = FuTemporary ;
++        StateMethod = GetMenuState;
++    ]
++    SID_SLIDE_ANIMATION_ADD
++    [
++        ExecMethod = FuTemporary ;
++        StateMethod = GetMenuState;
++    ]
++    SID_SLIDE_ANIMATION_CHANGE
++    [
++        ExecMethod = FuTemporary ;
++        StateMethod = GetMenuState;
++    ]
+     SID_COPY_SLIDE
+     [
+         ExecMethod = FuTemporary ;
+diff --git a/sd/sdi/sdraw.sdi b/sd/sdi/sdraw.sdi
+index 728b670..df3c91c 100644
+--- a/sd/sdi/sdraw.sdi
++++ b/sd/sdi/sdraw.sdi
+@@ -4215,6 +4215,57 @@ SfxVoidItem SlideNotes SID_SLIDE_NOTES
+     GroupId = SfxGroupId::Modify;
+ ]
+ 
++SfxVoidItem SetSlideTransition SID_SLIDE_TRANSITION_SET
++(SfxStringItem Transition FN_PARAM_1)
++[
++    AutoUpdate = FALSE,
++    FastCall = FALSE,
++    ReadOnlyDoc = FALSE,
++    Toggle = FALSE,
++    Container = FALSE,
++    RecordAbsolute = FALSE,
++    RecordPerSet;
++
++    AccelConfig = FALSE,
++    MenuConfig = FALSE,
++    ToolBoxConfig = FALSE,
++    GroupId = SfxGroupId::Modify;
++]
++
++SfxVoidItem AddAnimation SID_SLIDE_ANIMATION_ADD
++(SfxStringItem Animation FN_PARAM_1)
++[
++    AutoUpdate = FALSE,
++    FastCall = FALSE,
++    ReadOnlyDoc = FALSE,
++    Toggle = FALSE,
++    Container = FALSE,
++    RecordAbsolute = FALSE,
++    RecordPerSet;
++
++    AccelConfig = FALSE,
++    MenuConfig = FALSE,
++    ToolBoxConfig = FALSE,
++    GroupId = SfxGroupId::Modify;
++]
++
++SfxVoidItem ChangeAnimation SID_SLIDE_ANIMATION_CHANGE
++(SfxStringItem Animation FN_PARAM_1)
++[
++    AutoUpdate = FALSE,
++    FastCall = FALSE,
++    ReadOnlyDoc = FALSE,
++    Toggle = FALSE,
++    Container = FALSE,
++    RecordAbsolute = FALSE,
++    RecordPerSet;
++
++    AccelConfig = FALSE,
++    MenuConfig = FALSE,
++    ToolBoxConfig = FALSE,
++    GroupId = SfxGroupId::Modify;
++]
++
+ SfxVoidItem CopySlide SID_COPY_SLIDE
+ ()
+ [
+diff --git a/sd/source/ui/inc/DrawViewShell.hxx b/sd/source/ui/inc/DrawViewShell.hxx
+index 6e42423..c9e74e3 100644
+--- a/sd/source/ui/inc/DrawViewShell.hxx
++++ b/sd/source/ui/inc/DrawViewShell.hxx
+@@ -36,6 +36,7 @@ namespace com::sun::star::scanner { class XScannerManager2; }
+ namespace com::sun::star::presentation { class XSlideShow; }
+ 
+ class EditTextObject;
++namespace tools { class JsonWriter; }
+ class Outliner;
+ class SdPage;
+ class SdStyleSheet;
+@@ -284,6 +285,12 @@ public:
+     static void     CheckLineTo (SfxRequest& rReq);
+     /// The text's one look; none when it varies.
+     static std::optional<SfxItemSet> NotesLook(const EditTextObject& rText, SfxItemPool& rPool);
++    /// Kit edits of transitions and animations, from JSON.
++    bool KitTransition(std::u16string_view rJson);
++    bool KitAddAnimation(std::u16string_view rJson);
++    bool KitChangeAnimation(std::u16string_view rJson);
++    static void WriteKitTransition(::tools::JsonWriter& rJson, SdPage& rPage);
++    static void WriteKitAnimations(::tools::JsonWriter& rJson, SdPage& rPage);
+     void            SetChildWindowState( SfxItemSet& rSet );
+ 
+     void            UpdateIMapDlg( SdrObject* pObj );
+diff --git a/sd/source/ui/unoidl/unomodel.cxx b/sd/source/ui/unoidl/unomodel.cxx
+index 8418d71..40a4bca 100644
+--- a/sd/source/ui/unoidl/unomodel.cxx
++++ b/sd/source/ui/unoidl/unomodel.cxx
+@@ -2064,7 +2064,8 @@ void SdXImpressDocument::Notify( SfxBroadcaster& rBC, const SfxHint& rHint )
+ bool SdXImpressDocument::supportsCommand(std::u16string_view rCommand)
+ {
+     return rCommand == u"SlideDesign" || rCommand == u"SlideObjects" || rCommand == u"Chart"
+-           || rCommand == u"SlideNotes";
++           || rCommand == u"SlideNotes" || rCommand == u"SlideTransition"
++           || rCommand == u"SlideAnimations";
+ }
+ 
+ namespace
+@@ -2291,6 +2292,19 @@ void SdXImpressDocument::getCommandValues(::tools::JsonWriter& rJsonWriter, std:
+             lcl_SlideNotes(rJsonWriter, *mpDoc, *pShell);
+         return;
+     }
++    if (rCommand == ".uno:SlideTransition" || rCommand == ".uno:SlideAnimations")
++    {
++        DrawViewShell* pShell = GetViewShell();
++        SdPage* pPage = pShell ? pShell->GetActualPage() : nullptr;
++        if (pPage && !pPage->IsMasterPage())
++        {
++            if (rCommand == ".uno:SlideTransition")
++                DrawViewShell::WriteKitTransition(rJsonWriter, *pPage);
++            else
++                DrawViewShell::WriteKitAnimations(rJsonWriter, *pPage);
++        }
++        return;
++    }
+     if (rCommand == ".uno:SlideObjects")
+     {
+         if (DrawViewShell* pShell = GetViewShell())
+diff --git a/sd/source/ui/view/drviews2.cxx b/sd/source/ui/view/drviews2.cxx
+index 8b734af..ff603da 100644
+--- a/sd/source/ui/view/drviews2.cxx
++++ b/sd/source/ui/view/drviews2.cxx
+@@ -3880,6 +3880,22 @@ void DrawViewShell::FuTemporary(SfxRequest& rReq)
+         }
+         break;
+ 
++        case SID_SLIDE_TRANSITION_SET:
++        case SID_SLIDE_ANIMATION_ADD:
++        case SID_SLIDE_ANIMATION_CHANGE:
++        {
++            // Kit edits; a JSON that does not fit changes nothing.
++            const SfxStringItem* pJson = rReq.GetArg<SfxStringItem>(FN_PARAM_1);
++            const bool bDone = pJson
++                && (nSId == SID_SLIDE_TRANSITION_SET ? KitTransition(pJson->GetValue())
++                    : nSId == SID_SLIDE_ANIMATION_ADD ? KitAddAnimation(pJson->GetValue())
++                                                      : KitChangeAnimation(pJson->GetValue()));
++            if (bDone)
++                rReq.Done();
++            Cancel();
++        }
++        break;
++
+         case SID_ALIGN_PAGE:
+         {
+             mpDrawView->AlignMarkedObjects(SdrHorAlign::Center, SdrVertAlign::Center);
+diff --git a/sd/source/ui/view/drviewskit.cxx b/sd/source/ui/view/drviewskit.cxx
+new file mode 100644
+index 0000000..10ece10
+--- /dev/null
++++ b/sd/source/ui/view/drviewskit.cxx
+@@ -0,0 +1,284 @@
++/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++/*
++ * This file is part of the LibreOffice project.
++ *
++ * This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
++ */
++
++#include <DrawViewShell.hxx>
++
++#include <CustomAnimationEffect.hxx>
++#include <CustomAnimationPreset.hxx>
++#include <DrawDocShell.hxx>
++#include <TransitionPreset.hxx>
++#include <ViewShellBase.hxx>
++#include <drawdoc.hxx>
++#include <drawview.hxx>
++#include <sdpage.hxx>
++#include <sdresid.hxx>
++#include <sdundogr.hxx>
++#include <strings.hrc>
++#include <undoanim.hxx>
++
++#include <com/sun/star/presentation/EffectNodeType.hpp>
++#include <com/sun/star/presentation/EffectPresetClass.hpp>
++#include <svx/svdundo.hxx>
++#include <animations/animationnodehelper.hxx>
++#include <tools/json_writer.hxx>
++#include <boost/json.hpp>
++// This translation unit builds boost.json for sd.
++#include <boost/json/src.hpp>
++
++#include <optional>
++#include <string>
++
++using namespace ::com::sun::star;
++namespace EffectNodeType = css::presentation::EffectNodeType;
++namespace EffectPresetClass = css::presentation::EffectPresetClass;
++
++namespace
++{
++std::optional<boost::json::object> lcl_Object(std::u16string_view rJson)
++{
++    boost::system::error_code aError;
++    boost::json::value aValue = boost::json::parse(std::string(OUString(rJson).toUtf8()), aError);
++    if (aError || !aValue.is_object())
++        return std::nullopt;
++    return aValue.as_object();
++}
++
++OUString lcl_String(const boost::json::value& rValue)
++{
++    return OUString::fromUtf8(std::string_view(rValue.as_string().data(), rValue.as_string().size()));
++}
++
++/// Member `rKey` as a number; absent is `fDefault`; else fails.
++std::optional<double> lcl_Number(const boost::json::object& rObject, std::string_view rKey,
++                                 double fDefault)
++{
++    const boost::json::value* pValue = rObject.if_contains(rKey);
++    if (!pValue)
++        return fDefault;
++    if (!pValue->is_number())
++        return std::nullopt;
++    return pValue->to_number<double>();
++}
++
++/// The slide's objects, comments left out, as .uno:SlideObjects lists them.
++std::vector<SdrObject*> lcl_Shapes(SdPage& rPage)
++{
++    std::vector<SdrObject*> aShapes;
++    for (const rtl::Reference<SdrObject>& pObj : rPage)
++        if (!pObj->isAnnotationObject())
++            aShapes.push_back(pObj.get());
++    return aShapes;
++}
++
++/// Start kinds as the kit names them.
++constexpr std::pair<sal_Int16, std::u16string_view> aStarts[]
++    = { { EffectNodeType::ON_CLICK, u"click" },
++        { EffectNodeType::WITH_PREVIOUS, u"with" },
++        { EffectNodeType::AFTER_PREVIOUS, u"after" } };
++
++/// Preset classes as the kit names them; others are "other".
++constexpr std::pair<sal_Int16, std::string_view> aClasses[]
++    = { { EffectPresetClass::ENTRANCE, "entrance" },
++        { EffectPresetClass::EMPHASIS, "emphasis" },
++        { EffectPresetClass::EXIT, "exit" } };
++
++/// The main sequence's effects, in order.
++std::vector<sd::CustomAnimationEffectPtr> lcl_Effects(SdPage& rPage)
++{
++    const sd::MainSequencePtr& pSequence = rPage.getMainSequence();
++    return std::vector<sd::CustomAnimationEffectPtr>(pSequence->getBegin(), pSequence->getEnd());
++}
++}
++
++namespace sd
++{
++bool DrawViewShell::KitTransition(std::u16string_view rJson)
++{
++    const std::optional<boost::json::object> oObject = lcl_Object(rJson);
++    if (!oObject)
++        return false;
++    const boost::json::value* pPreset = oObject->if_contains("preset");
++    const boost::json::value* pAdvance = oObject->if_contains("advance");
++    const boost::json::value* pAll = oObject->if_contains("all");
++    const std::optional<double> oDuration = lcl_Number(*oObject, "duration", 2.0);
++    const std::optional<double> oTime = lcl_Number(*oObject, "time", 0.0);
++    if (!pPreset || !pPreset->is_string() || !oDuration || *oDuration <= 0 || !oTime
++        || *oTime < 0 || (pAdvance && !pAdvance->is_string()) || (pAll && !pAll->is_bool()))
++        return false;
++    const OUString aId = lcl_String(*pPreset);
++    TransitionPresetPtr pFound;
++    for (const TransitionPresetPtr& pOne : TransitionPreset::getTransitionPresetList())
++        if (pOne->getPresetId() == aId)
++            pFound = pOne;
++    const OUString aAdvance = pAdvance ? lcl_String(*pAdvance) : u"click"_ustr;
++    if ((!aId.isEmpty() && !pFound) || (aAdvance != "click" && aAdvance != "auto"))
++        return false;
++    std::vector<SdPage*> aPages;
++    if (pAll && pAll->as_bool())
++        for (sal_uInt16 n = 0; n < GetDoc()->GetSdPageCount(PageKind::Standard); ++n)
++            aPages.push_back(GetDoc()->GetSdPage(n, PageKind::Standard));
++    else if (getCurrentPage() && !getCurrentPage()->IsMasterPage())
++        aPages.push_back(getCurrentPage());
++    if (aPages.empty())
++        return false;
++    SfxUndoManager* pManager = GetDocSh()->GetUndoManager();
++    const OUString aComment(SdResId(STR_UNDO_SLIDE_PARAMS));
++    pManager->EnterListAction(aComment, aComment, 0, GetViewShellBase().GetViewShellId());
++    std::unique_ptr<SdUndoGroup> pGroup(new SdUndoGroup(*GetDoc()));
++    pGroup->SetComment(aComment);
++    for (SdPage* pPage : aPages)
++    {
++        pGroup->AddAction(new UndoTransition(*GetDoc(), pPage));
++        pPage->setTransitionType(pFound ? pFound->getTransition() : 0);
++        pPage->setTransitionSubtype(pFound ? pFound->getSubtype() : 0);
++        pPage->setTransitionDirection(pFound ? pFound->getDirection() : true);
++        pPage->setTransitionFadeColor(pFound ? pFound->getFadeColor() : 0);
++        pPage->setTransitionDuration(*oDuration);
++        pPage->SetPresChange(aAdvance == "auto" ? PresChange::Auto : PresChange::Manual);
++        pPage->SetTime(*oTime);
++    }
++    pManager->AddUndoAction(std::move(pGroup));
++    pManager->LeaveListAction();
++    GetDocSh()->SetModified();
++    return true;
++}
++
++bool DrawViewShell::KitAddAnimation(std::u16string_view rJson)
++{
++    const std::optional<boost::json::object> oObject = lcl_Object(rJson);
++    const boost::json::value* pPreset = oObject ? oObject->if_contains("preset") : nullptr;
++    if (!pPreset || !pPreset->is_string())
++        return false;
++    const CustomAnimationPresetPtr pDescriptor
++        = CustomAnimationPresets::getCustomAnimationPresets().getEffectDescriptor(lcl_String(*pPreset));
++    const std::optional<double> oDuration
++        = pDescriptor ? lcl_Number(*oObject, "duration", pDescriptor->getDuration()) : std::nullopt;
++    const SdrMarkList& rMarks = mpDrawView->GetMarkedObjectList();
++    SdPage* pPage = getCurrentPage();
++    if (!oDuration || *oDuration <= 0 || rMarks.GetMarkCount() == 0 || !pPage)
++        return false;
++    const MainSequencePtr& pSequence = pPage->getMainSequence();
++    pSequence->getRootNode();
++    GetDocSh()->GetUndoManager()->AddUndoAction(std::make_unique<UndoAnimation>(GetDoc(), pPage));
++    for (size_t n = 0; n < rMarks.GetMarkCount(); ++n)
++    {
++        uno::Any aTarget(rMarks.GetMark(n)->GetMarkedSdrObj()->getUnoShape());
++        CustomAnimationEffectPtr pEffect = pSequence->append(pDescriptor, aTarget, *oDuration);
++        // Several objects at once go together.
++        if (n > 0)
++            pEffect->setNodeType(EffectNodeType::WITH_PREVIOUS);
++    }
++    pSequence->getRootNode();
++    GetDocSh()->SetModified();
++    return true;
++}
++
++bool DrawViewShell::KitChangeAnimation(std::u16string_view rJson)
++{
++    const std::optional<boost::json::object> oObject = lcl_Object(rJson);
++    SdPage* pPage = getCurrentPage();
++    if (!oObject || !pPage)
++        return false;
++    const std::vector<CustomAnimationEffectPtr> aEffects = lcl_Effects(*pPage);
++    const boost::json::value* pIndex = oObject->if_contains("index");
++    if (!pIndex || !pIndex->is_int64() || pIndex->as_int64() < 0
++        || pIndex->as_int64() >= sal_Int64(aEffects.size()))
++        return false;
++    const CustomAnimationEffectPtr& pEffect = aEffects[pIndex->as_int64()];
++    const boost::json::value* pStart = oObject->if_contains("start");
++    const boost::json::value* pMove = oObject->if_contains("move");
++    const boost::json::value* pRemove = oObject->if_contains("remove");
++    const std::optional<double> oDuration = lcl_Number(*oObject, "duration", pEffect->getDuration());
++    const std::optional<double> oDelay = lcl_Number(*oObject, "delay", pEffect->getBegin());
++    std::optional<sal_Int16> oNode;
++    for (const auto& [nType, rName] : aStarts)
++        if (pStart && pStart->is_string() && rName == lcl_String(*pStart))
++            oNode = nType;
++    const sal_Int64 nTo = pMove && pMove->is_int64() ? pIndex->as_int64() + pMove->as_int64() : 0;
++    if ((pStart && !oNode) || !oDuration || *oDuration <= 0 || !oDelay || *oDelay < 0
++        || (pMove && (!pMove->is_int64() || nTo < 0 || nTo >= sal_Int64(aEffects.size())))
++        || (pRemove && !pRemove->is_bool()))
++        return false;
++    const MainSequencePtr& pSequence = pPage->getMainSequence();
++    pSequence->getRootNode();
++    GetDocSh()->GetUndoManager()->AddUndoAction(std::make_unique<UndoAnimation>(GetDoc(), pPage));
++    if (pRemove && pRemove->as_bool())
++        pSequence->remove(pEffect);
++    else
++    {
++        if (oNode)
++            pEffect->setNodeType(*oNode);
++        pEffect->setDuration(*oDuration);
++        pEffect->setBegin(*oDelay);
++        if (pMove)
++        {
++            EffectSequence& rList = pSequence->getSequence();
++            rList.erase(pSequence->find(pEffect));
++            rList.insert(std::next(rList.begin(), nTo), pEffect);
++        }
++        pSequence->rebuild();
++    }
++    pSequence->getRootNode();
++    GetDocSh()->SetModified();
++    return true;
++}
++
++void DrawViewShell::WriteKitTransition(::tools::JsonWriter& rJson, SdPage& rPage)
++{
++    OUString aId;
++    for (const TransitionPresetPtr& pOne : TransitionPreset::getTransitionPresetList())
++        if (rPage.getTransitionType() && pOne->getTransition() == rPage.getTransitionType()
++            && pOne->getSubtype() == rPage.getTransitionSubtype()
++            && pOne->getDirection() == rPage.getTransitionDirection()
++            && pOne->getFadeColor() == rPage.getTransitionFadeColor() && aId.isEmpty())
++            aId = pOne->getPresetId();
++    // A transition no preset matches.
++    if (rPage.getTransitionType() && aId.isEmpty())
++        aId = "other";
++    rJson.put("preset", aId);
++    rJson.put("duration", rPage.getTransitionDuration());
++    rJson.put("advance", rPage.GetPresChange() == PresChange::Manual ? "click" : "auto");
++    rJson.put("time", rPage.GetTime());
++}
++
++void DrawViewShell::WriteKitAnimations(::tools::JsonWriter& rJson, SdPage& rPage)
++{
++    const std::vector<SdrObject*> aShapes = lcl_Shapes(rPage);
++    const CustomAnimationPresets& rPresets = CustomAnimationPresets::getCustomAnimationPresets();
++    auto aList = rJson.startArray("effects");
++    for (const CustomAnimationEffectPtr& pEffect : lcl_Effects(rPage))
++    {
++        auto aOne = rJson.startStruct();
++        rJson.put("preset", pEffect->getPresetId());
++        const CustomAnimationPresetPtr pDescriptor = rPresets.getEffectDescriptor(pEffect->getPresetId());
++        rJson.put("label", pDescriptor ? pDescriptor->getLabel() : OUString());
++        std::string_view aClass = "other";
++        for (const auto& [nClass, rName] : aClasses)
++            if (nClass == pEffect->getPresetClass())
++                aClass = rName;
++        rJson.put("class", aClass);
++        SdrObject* pTarget = SdrObject::getSdrObjectFromXShape(pEffect->getTargetShape());
++        const auto pAt = std::find(aShapes.begin(), aShapes.end(), pTarget);
++        rJson.put("target", pAt == aShapes.end() ? sal_Int64(-1) : sal_Int64(pAt - aShapes.begin()));
++        // The slideshow layer of the same shape has this hash.
++        OStringBuffer aHash;
++        anim::convertTarget(aHash, pEffect->getTarget());
++        rJson.put("hash", aHash.makeStringAndClear());
++        std::u16string_view aStart = u"click";
++        for (const auto& [nType, rName] : aStarts)
++            if (nType == pEffect->getNodeType())
++                aStart = rName;
++        rJson.put("start", OUString(aStart));
++        rJson.put("duration", pEffect->getDuration());
++        rJson.put("delay", pEffect->getBegin());
++    }
++}
++}
++
++/* vim:set shiftwidth=4 softtabstop=4 expandtab: */

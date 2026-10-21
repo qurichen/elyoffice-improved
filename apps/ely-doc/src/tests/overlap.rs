@@ -1,0 +1,166 @@
+use ely_office::After;
+use gpui::TestAppContext;
+
+use super::*;
+use crate::merge::read_csv;
+
+#[test]
+fn typing_during_a_closing_save_is_never_lost() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut cx = TestAppContext::single();
+    let Some(docs) = docs(&mut cx, dir.path()) else {
+        eprintln!("SKIP: no LOK build");
+        return;
+    };
+    let id = blank(&mut cx, &docs);
+    type_into(&mut cx, &docs, "BeforeExport ");
+    let path = dir.path().join("closing.odt");
+    with_window(&mut cx, &docs, |docs, window, cx| {
+        docs.write_as(id, path.clone(), Some(After::Tab), window, cx)
+    });
+    commit(&mut cx, &docs, "AfterExport");
+    settle(&cx, |app| {
+        let docs = docs.read(app);
+        docs.tab(id).is_none() || matches!(docs.core.dialog, Some(Dialog::Unsaved { .. }))
+    });
+    let closed = cx.update(|app| docs.read(app).tab(id).is_none());
+    let text = text_of(&mut cx, &docs, &path);
+    assert!(text.contains("BeforeExport"), "the export saved");
+    assert!(
+        !closed || text.contains("AfterExport"),
+        "a closed tab lost later typing"
+    );
+}
+
+#[test]
+fn two_tabs_saving_as_one_path_keep_one_owner() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut cx = TestAppContext::single();
+    let Some(docs) = docs(&mut cx, dir.path()) else {
+        eprintln!("SKIP: no LOK build");
+        return;
+    };
+    let first = blank(&mut cx, &docs);
+    type_into(&mut cx, &docs, "FirstOwner");
+    let second = blank(&mut cx, &docs);
+    type_into(&mut cx, &docs, "SecondOwner");
+    let same = dir.path().join("same.odt");
+    with_window(&mut cx, &docs, |docs, window, cx| {
+        docs.write_as(first, same.clone(), None, window, cx);
+        docs.write_as(second, same.clone(), None, window, cx);
+    });
+    written(&cx, &same, None);
+    settle(&cx, |app| {
+        docs.read(app).core.tabs.iter().all(|tab| !tab.exporting)
+    });
+    let owners: Vec<u64> = cx.update(|app| {
+        let docs = docs.read(app);
+        docs.core
+            .tabs
+            .iter()
+            .filter(|tab| {
+                tab.session
+                    .path()
+                    .is_some_and(|path| ely_files::same_file(path, &same).expect("comparable"))
+            })
+            .map(|tab| tab.id)
+            .collect()
+    });
+    assert_eq!(owners.len(), 1, "one tab holds the file");
+    let text = text_of(&mut cx, &docs, &same);
+    let mark = if owners[0] == first {
+        "FirstOwner"
+    } else {
+        "SecondOwner"
+    };
+    assert!(text.contains(mark), "the file is its owner's");
+}
+
+#[test]
+fn interleaved_previews_keep_their_sources() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut cx = TestAppContext::single();
+    let Some(docs) = docs(&mut cx, dir.path()) else {
+        eprintln!("SKIP: no LOK build");
+        return;
+    };
+    let alpha = blank(&mut cx, &docs);
+    type_into(&mut cx, &docs, "SourceAlpha ");
+    update_doc(&mut cx, &docs, |docs, cx| docs.field_here("Name", cx));
+    let beta = blank(&mut cx, &docs);
+    type_into(&mut cx, &docs, "SourceBeta ");
+    update_doc(&mut cx, &docs, |docs, cx| docs.field_here("Name", cx));
+    settled(&cx, &docs);
+    let csv = dir.path().join("two.csv");
+    std::fs::write(&csv, "Name\nAda\nGrace\n").expect("the csv writes");
+    let table = read_csv(&csv).expect("the csv reads");
+    update_doc(&mut cx, &docs, |docs, cx| {
+        docs.preview_record(alpha, &table, 0, cx);
+        docs.preview_record(beta, &table, 1, cx);
+    });
+    settle(&cx, |app| {
+        let docs = docs.read(app);
+        // A filled preview is a modified copy.
+        docs.core.tabs.len() == 4 && docs.core.tabs[2..].iter().all(|tab| tab.modified)
+    });
+    let previews: Vec<u64> = cx.update(|app| {
+        let tabs = &docs.read(app).core.tabs;
+        tabs[2..].iter().map(|tab| tab.id).collect()
+    });
+    let mut texts = Vec::new();
+    for (n, id) in previews.into_iter().enumerate() {
+        let path = dir.path().join(format!("preview{n}.odt"));
+        with_window(&mut cx, &docs, |docs, window, cx| {
+            docs.write_as(id, path.clone(), None, window, cx)
+        });
+        written(&cx, &path, None);
+        texts.push(text_of(&mut cx, &docs, &path));
+    }
+    assert!(
+        texts.iter().any(|text| text.contains("SourceAlpha Ada")),
+        "{texts:?}"
+    );
+    assert!(
+        texts.iter().any(|text| text.contains("SourceBeta Grace")),
+        "{texts:?}"
+    );
+}
+
+#[test]
+fn closing_a_clean_tab_never_waits_for_the_worker() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut cx = TestAppContext::single();
+    let Some(docs) = docs(&mut cx, dir.path()) else {
+        eprintln!("SKIP: no LOK build");
+        return;
+    };
+    let id = blank(&mut cx, &docs);
+    settled(&cx, &docs);
+    let worker = cx.update(|app| docs.read(app).core.worker.clone());
+    let (held, hold) = std::sync::mpsc::channel();
+    let holder = std::thread::spawn(move || {
+        let _busy = worker.lock().expect("the worker lock");
+        held.send(()).expect("the test waits");
+        std::thread::sleep(std::time::Duration::from_millis(400));
+    });
+    hold.recv().expect("the lock is held");
+    let started = std::time::Instant::now();
+    with_window(&mut cx, &docs, |docs, window, cx| {
+        docs.request_close(id, After::Tab, window, cx)
+    });
+    let took = started.elapsed();
+    assert!(
+        took < std::time::Duration::from_millis(100),
+        "the close waited {took:?}"
+    );
+    holder.join().expect("the holder ends");
+    settle(&cx, |app| docs.read(app).tab(id).is_none());
+}
+
+fn update_doc(
+    cx: &mut TestAppContext,
+    docs: &Entity<Docs>,
+    f: impl FnOnce(&mut Docs, &mut gpui::Context<Docs>),
+) {
+    cx.update(|app| docs.update(app, f));
+}

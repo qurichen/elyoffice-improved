@@ -1,0 +1,45 @@
+{
+ "window": { "x": 144, "y": 40, "w": 1632, "h": 918 },
+ "sections": [
+  {
+   "app": "doc", "title": "ElyDoc", "en": "Write. Offline.", "zh": "离线写作。",
+   "pieces": [
+    { "src": "doc", "anchors": [[0, 1.0], [4, 3.4], [9, 8.0], [10, 8.8], [12, 10.3], [15, 12.233], [16, 13.6]] }
+   ]
+  },
+  {
+   "app": "table", "title": "ElyTable", "en": "Sum it. Chart it.", "zh": "求和，出图。",
+   "pieces": [
+    { "src": "table", "anchors": [[0, 1.0], [4, 3.9], [8, 7.3]] },
+    { "src": "table", "anchors": [[8, 17.0], [12, 19.933], [15, 22.683], [16, 23.6]] }
+   ]
+  },
+  {
+   "app": "show", "title": "ElyShow", "en": "Animate. Present.", "zh": "加动画，去放映。",
+   "pieces": [
+    { "src": "show", "anchors": [[0, 0.6], [4, 4.2], [7, 6.6]] },
+    { "src": "show", "anchors": [[7, 11.8], [12, 15.0]] },
+    { "src": "show-play", "anchors": [[12, 1.2], [13, 1.5], [15, 3.2], [16, 4.0]] }
+   ]
+  },
+  {
+   "app": "pdf", "title": "ElyPDF", "en": "Mark up. Sign.", "zh": "批注，签名。",
+   "pieces": [
+    { "src": "pdf", "anchors": [[0, 0.8], [4, 4.6], [5, 5.083], [8, 8.2], [9, 9.0], [13, 13.0], [14, 13.9], [16, 15.9]] }
+   ]
+  },
+  {
+   "app": "tree", "title": "ElyTree", "en": "Stage. Commit. Look back.", "zh": "暂存，提交，回看历史。",
+   "pieces": [
+    { "src": "tree", "anchors": [[0, 0.8], [4, 3.6], [5, 4.1], [7, 7.2]] },
+    { "src": "tree", "anchors": [[7, 10.4], [8, 11.4], [9, 13.2], [11, 15.5], [16, 19.9]] }
+   ]
+  },
+  {
+   "app": "mark", "title": "ElyMark", "en": "Markdown, two ways.", "zh": "Markdown，可视与源码。",
+   "pieces": [
+    { "src": "mark", "anchors": [[0, 0.6], [4, 2.8], [7, 5.9], [12, 10.267], [15, 12.55], [16, 13.6]] }
+   ]
+  }
+ ]
+}

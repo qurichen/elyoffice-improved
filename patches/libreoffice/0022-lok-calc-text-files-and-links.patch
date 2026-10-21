@@ -1,0 +1,169 @@
+diff --git a/desktop/source/lib/init.cxx b/desktop/source/lib/init.cxx
+index f735297..12f51b1 100644
+--- a/desktop/source/lib/init.cxx
++++ b/desktop/source/lib/init.cxx
+@@ -2980,6 +2980,8 @@ static LibreOfficeKitDocument* lo_documentLoadWithOptions(LibreOfficeKit* pThis,
+         // set AsTemplate explicitly false to be able to load template files
+         // as regular files, otherwise we cannot save them; it will try
+         // to bring saveas dialog which cannot work with LOK case
++        // A kit client may name the filter; detection guesses otherwise.
++        const OUString aFilterName = extractParameter(aOptions, u"FilterName");
+         uno::Sequence<css::beans::PropertyValue> aFilterOptions{
+             comphelper::makePropertyValue(u"FilterOptions"_ustr, aOptions),
+             comphelper::makePropertyValue(u"InteractionHandler"_ustr, uno::Reference<task::XInteractionHandler2>(pInteraction)),
+@@ -2987,6 +2989,12 @@ static LibreOfficeKitDocument* lo_documentLoadWithOptions(LibreOfficeKit* pThis,
+             comphelper::makePropertyValue(u"AsTemplate"_ustr, false),
+             comphelper::makePropertyValue(u"Silent"_ustr, !aBatch.isEmpty())
+         };
++        if (!aFilterName.isEmpty())
++        {
++            aFilterOptions.realloc(aFilterOptions.getLength() + 1);
++            aFilterOptions.getArray()[aFilterOptions.getLength() - 1]
++                = comphelper::makePropertyValue(u"FilterName"_ustr, aFilterName);
++        }
+ 
+         /* TODO
+         sal_Int16 nUpdateDoc = document::UpdateDocMode::ACCORDING_TO_CONFIG;
+@@ -3857,21 +3865,24 @@ static int doc_saveAs(LibreOfficeKitDocument* pThis, const char* sUrl, const cha
+         // saveAs() is more like save-a-copy, which allows saving to any
+         // random format like PDF or PNG.
+         // It is not a real filter option, so we have to filter it out.
+-        const uno::Sequence<OUString> aOptionSeq = comphelper::string::convertCommaSeparated(aFilterOptions);
++        // Other tokens pass verbatim: CSV options are positional.
+         std::vector<OUString> aFilteredOptionVec;
+         bool bTakeOwnership = false;
+         bool bCreateFromTemplate = false;
+         MediaDescriptor aSaveMediaDescriptor;
+-        for (const auto& rOption : aOptionSeq)
++        sal_Int32 nOption = aFilterOptions.isEmpty() ? -1 : 0;
++        while (nOption >= 0)
+         {
+-            if (rOption == "TakeOwnership")
++            const OUString aOption = aFilterOptions.getToken(0, ',', nOption);
++            const OUString aKey = aOption.trim();
++            if (aKey == "TakeOwnership")
+                 bTakeOwnership = true;
+-            else if (rOption == "NoFileSync")
++            else if (aKey == "NoFileSync")
+                 aSaveMediaDescriptor[u"NoFileSync"_ustr] <<= true;
+-            else if (rOption == "FromTemplate")
++            else if (aKey == "FromTemplate")
+                 bCreateFromTemplate = true;
+             else
+-                aFilteredOptionVec.push_back(rOption);
++                aFilteredOptionVec.push_back(aOption);
+         }
+ 
+         if (bCreateFromTemplate && bTakeOwnership)
+@@ -3886,8 +3897,14 @@ static int doc_saveAs(LibreOfficeKitDocument* pThis, const char* sUrl, const cha
+         aSaveMediaDescriptor[u"Overwrite"_ustr] <<= true;
+         aSaveMediaDescriptor[u"FilterName"_ustr] <<= aFilterName;
+ 
+-        auto aFilteredOptionSeq = comphelper::containerToSequence<OUString>(aFilteredOptionVec);
+-        aFilterOptions = comphelper::string::convertCommaSeparated(aFilteredOptionSeq);
++        OUStringBuffer aKept;
++        for (size_t i = 0; i < aFilteredOptionVec.size(); ++i)
++        {
++            if (i)
++                aKept.append(',');
++            aKept.append(aFilteredOptionVec[i]);
++        }
++        aFilterOptions = aKept.makeStringAndClear();
+         aSaveMediaDescriptor[MediaDescriptor::PROP_FILTEROPTIONS] <<= aFilterOptions;
+ 
+         comphelper::SequenceAsHashMap aFilterDataMap;
+diff --git a/sc/source/ui/unoobj/docuno.cxx b/sc/source/ui/unoobj/docuno.cxx
+index 0715e00..b850504 100644
+--- a/sc/source/ui/unoobj/docuno.cxx
++++ b/sc/source/ui/unoobj/docuno.cxx
+@@ -159,6 +159,14 @@
+ #include <dpshttab.hxx>
+ #include <kitpivot.hxx>
+ #include <kitsheet.hxx>
++#include <arealink.hxx>
++#include <ddelink.hxx>
++#include <documentlinkmgr.hxx>
++#include <externalrefmgr.hxx>
++#include <tablink.hxx>
++#include <webservicelink.hxx>
++#include <sfx2/linkmgr.hxx>
++#include <set>
+ #include <attrib.hxx>
+ #include <svx/pageitem.hxx>
+ #include <pivot.hxx>
+@@ -987,6 +995,33 @@ void lcl_PrintLayout(tools::JsonWriter& rJson, ScDocument& rDoc, const ScAddress
+     }
+ }
+ 
++/// Files and sources whose data the workbook shows as saved.
++void lcl_ExternalLinks(tools::JsonWriter& rJson, ScDocument& rDoc)
++{
++    std::set<OUString> aSources;
++    ScExternalRefManager* pRefs = rDoc.GetExternalRefManager();
++    for (sal_uInt16 i = 0, n = pRefs->getExternalFileCount(); i < n; ++i)
++        if (const OUString* pName = pRefs->getExternalFileName(i, true))
++            aSources.insert(*pName);
++    if (sfx2::LinkManager* pLinks = rDoc.GetDocLinkManager().getLinkManager(false))
++    {
++        for (const auto& rLink : pLinks->GetLinks())
++        {
++            if (auto pArea = dynamic_cast<const ScAreaLink*>(rLink.get()))
++                aSources.insert(pArea->GetFile());
++            else if (auto pTable = dynamic_cast<const ScTableLink*>(rLink.get()))
++                aSources.insert(pTable->GetFileName());
++            else if (auto pDde = dynamic_cast<const ScDdeLink*>(rLink.get()))
++                aSources.insert(pDde->GetAppl() + "|" + pDde->GetTopic());
++            else if (auto pWeb = dynamic_cast<const ScWebServiceLink*>(rLink.get()))
++                aSources.insert(pWeb->GetURL());
++        }
++    }
++    auto aArray = rJson.startArray("links");
++    for (const OUString& rSource : aSources)
++        rJson.putSimpleValue(rSource);
++}
++
+ /// The sheet's protection and its allowed actions.
+ void lcl_SheetProtection(tools::JsonWriter& rJson, ScDocument& rDoc, SCTAB nTab)
+ {
+@@ -1058,7 +1093,8 @@ bool ScModelObj::supportsCommand(std::u16string_view rCommand)
+         = { u"SheetReferences",  u"DefinedNames",       u"SelectedRange",
+             u"AutoFilterValues", u"DataSelectValues",   u"Validation",
+             u"NumberFormatCode", u"ConditionalFormats", u"Chart",
+-            u"PivotTable",       u"PrintLayout",        u"SheetProtection" };
++            u"PivotTable",       u"PrintLayout",        u"SheetProtection",
++            u"ExternalLinks" };
+     return std::find(std::begin(aCommands), std::end(aCommands), rCommand) != std::end(aCommands);
+ }
+ 
+@@ -1066,6 +1102,8 @@ void ScModelObj::getCommandValues(tools::JsonWriter& rJsonWriter, std::string_vi
+ {
+     if (pDocShell && rCommand == ".uno:DefinedNames")
+         return lcl_DefinedNames(rJsonWriter, pDocShell->GetDocument());
++    if (pDocShell && rCommand == ".uno:ExternalLinks")
++        return lcl_ExternalLinks(rJsonWriter, pDocShell->GetDocument());
+     ScViewData* pCurrent = ScDocShell::GetViewData();
+     if (pDocShell && pCurrent)
+     {
+diff --git a/sc/source/ui/unoobj/filtuno.cxx b/sc/source/ui/unoobj/filtuno.cxx
+index ef9a326..e7c57cf 100644
+--- a/sc/source/ui/unoobj/filtuno.cxx
++++ b/sc/source/ui/unoobj/filtuno.cxx
+@@ -41,6 +41,7 @@
+ #include <optutil.hxx>
+ #include <com/sun/star/uno/Any.hxx>
+ #include <com/sun/star/uno/Sequence.hxx>
++#include <comphelper/lok.hxx>
+ #include <comphelper/namedvaluecollection.hxx>
+ #include <comphelper/propertysequence.hxx>
+ #include <memory>
+@@ -179,6 +180,10 @@ sal_Int16 SAL_CALL ScFilterOptionsObj::execute()
+ 
+     if ( !bExport && aFilterString == ScDocShell::GetAsciiFilterName() )
+     {
++        // A kit client's options stand.
++        if (comphelper::LibreOfficeKit::isActive() && !aFilterOptions.isEmpty())
++            return ui::dialogs::ExecutableDialogResults::OK;
++
+         //  ascii import is special...
+ 
+         INetURLObject aURL( aFileName );

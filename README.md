@@ -1,3 +1,31 @@
+# ElyOffice Improved
+
+ElyOffice 的实验性改进分支 / An experimental ElyOffice derivative.
+
+## 为什么关注这个项目 / Why this project
+
+- **开源、可审查、可定制**：遵循 AGPL-3.0-or-later，可研究、修改并按许可要求再分发。
+- **离线优先、文件由你掌握**：核心本地文档处理不依赖云端账号，不要求把正文交给云端服务。
+- **面向常用办公格式**：文字、表格和演示使用 LibreOfficeKit，支持 DOCX/XLSX/PPTX 与 ODF；支持格式不等于完整兼容所有功能。
+- **原生桌面界面**：基于 Rust 与 GPUI，可从源码调整界面和本地工作流。
+- **改进有据可查**：保留补丁、合成测试样本和验证范围，重点修复 Windows 运行、文档往返及保存恢复问题。
+
+- **Open and adaptable**: inspect, modify and redistribute under AGPL-3.0-or-later and applicable third-party licences.
+- **Offline-first, user-controlled files**: core local document workflows need no cloud account and do not require sending document contents to a cloud service.
+- **Familiar office formats**: LibreOfficeKit powers DOCX/XLSX/PPTX and ODF workflows; format support does not mean complete feature compatibility.
+- **Native desktop UI**: Rust and GPUI provide a source-customizable desktop interface and local workflow.
+- **Evidence-backed improvements**: patches, synthetic fixtures and scoped validation document Windows, document-roundtrip and save/recovery repairs.
+
+目前为源码预览，不是安装包，也不保证完全替代 Microsoft Office。
+尚未证明比其他办公软件更快或更省内存；完整交互、恢复和安装验收仍未完成。
+This is a source preview, not an installer or a claim of full Microsoft Office parity.
+No speed or memory advantage is claimed; complete interactive, recovery and installer validation remains open.
+
+发布范围、清理事项与原作者信息 / Publication scope, hygiene and attribution:
+[PUBLICATION.md](PUBLICATION.md).
+
+---
+
 # Ely Office
 
 This working branch improves Windows build reliability and OOXML fidelity.
