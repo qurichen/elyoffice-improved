@@ -39,17 +39,18 @@ a tested GitHub Actions workflow. `scripts/ci.sh` uploads to upstream
 Gitea; do not run it to publish this fork. No GitHub publishing automation
 or credentials have been configured by this work.
 
-`site/src/main.ts`, `site/src/release.ts` and `site/worker/index.ts` still
-refer to the original website/release service.
-`crates/ely-ui/src/updates.rs`'s `LATEST` constant also points to upstream;
-it is the actual in-app update entry point. Installer publisher fields,
-macOS signing settings and application identifiers also retain upstream
-values. Attribution must remain, but a separately distributed fork needs
-an explicit identity and publishing/update-channel plan before packaging.
-No substitute maintainer name, endpoint, signing identity or GitHub URL
-has been invented here. Check the actual built update manifests and URLs
-as well as source constants; do not deliver a fork that updates from an
-unintended repository.
+`crates/ely-ui/src/updates.rs` now points to the fork's own GitHub release
+feed, `qurichen/elyoffice-improved`. A regression checks that it cannot switch
+back to upstream. This source update creates no release assets, so it does not
+offer an installable update through that feed.
+
+The inherited website/release tooling, installer publisher fields, macOS signing
+settings and application identifiers still need review before a separately
+distributed binary release. Do not run upstream upload scripts. Original
+attribution must remain. The actual built manifests, URLs, signing identity and
+installation scope must be checked against the intended fork before packaging.
+GitHub source publishing uses the owner's authorized repository connection;
+no GitHub binary-release automation is established by this update.
 
 ## Binary release gates
 

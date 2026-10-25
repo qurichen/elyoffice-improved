@@ -1,6 +1,8 @@
 use super::*;
 use crate::crash::{Crash, Marker};
 
+mod restore;
+
 fn at(secs: u64) -> SystemTime {
     SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
 }

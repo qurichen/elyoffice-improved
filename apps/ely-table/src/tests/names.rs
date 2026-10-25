@@ -42,6 +42,7 @@ fn quiet(cx: &TestAppContext, book: &Entity<Book>) {
 fn a_name_is_checked_then_defined_on_the_selection() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -93,6 +94,7 @@ fn a_name_is_checked_then_defined_on_the_selection() {
 fn define_waits_for_queued_input_and_reads_named_selections() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -133,6 +135,7 @@ fn define_waits_for_queued_input_and_reads_named_selections() {
 fn the_names_list_stays_with_its_workbook_and_scope() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -247,6 +250,7 @@ fn the_names_list_stays_with_its_workbook_and_scope() {
 fn a_waiting_definition_keeps_its_workbook_sheets() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -322,6 +326,7 @@ fn a_waiting_definition_keeps_its_workbook_sheets() {
 fn a_rename_stays_with_its_workbook() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -346,11 +351,14 @@ fn a_rename_stays_with_its_workbook() {
         book.update(app, |book, cx| {
             book.core.active = Some(first);
             book.ask_rename(window, cx);
-            book.core.active = Some(second);
-            book.rename_asked("Kept", cx);
         })
     })
     .expect("the window lives");
+    settle(&cx, |app| matches!(book.read(app).dialog, Some(Dialog::Rename { .. })));
+    update(&mut cx, &book, |book, cx| {
+        book.core.active = Some(second);
+        book.rename_asked("Kept", cx);
+    });
     settle(&cx, |app| {
         book.read(app).core.tabs[0].extra.sheets.list[0].name == "Kept"
     });

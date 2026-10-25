@@ -4,12 +4,14 @@ use super::*;
 
 mod analysis;
 mod borders;
+mod cell_looks;
 mod charts;
 mod chart_appearance;
 mod check;
 mod commands;
 mod fidelity;
 mod filter;
+mod fonts;
 mod format;
 mod formula;
 mod handouts;
@@ -17,6 +19,8 @@ mod hyperlink;
 mod independent;
 pub(crate) mod input;
 mod latency;
+#[cfg(windows)]
+mod long_profile;
 mod layout;
 mod media;
 mod menus;
@@ -31,6 +35,7 @@ mod rules;
 mod sheet;
 pub(crate) mod show;
 mod slides;
+mod tiled;
 mod tools;
 mod word;
 mod word_equation;
@@ -41,6 +46,10 @@ const PINNED_BUILD: &str = "8221e31";
 
 /// The pinned build, or None when absent.
 pub(crate) fn install() -> Option<PathBuf> {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .filter_level(log::LevelFilter::Info)
+        .try_init();
     install_dir().ok()
 }
 
@@ -308,7 +317,7 @@ fn an_unpatched_build_is_rejected() {
     };
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidData, "{error}");
     assert!(
-        error.to_string().contains("does not paint tiles (unpatched)"),
+        error.to_string().contains("paints no BGRA red (unpatched"),
         "rejected for the tile check, not {error}"
     );
 }

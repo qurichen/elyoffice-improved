@@ -12,6 +12,7 @@ use crate::preview::Playing;
 fn a_transition_and_an_effect_land_and_preview() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -80,6 +81,7 @@ fn a_transition_and_an_effect_land_and_preview() {
 fn inserted_media_reads_back_and_is_picked() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -111,6 +113,7 @@ fn inserted_media_reads_back_and_is_picked() {
 fn a_stop_cancels_a_preview_on_its_way_and_a_slide_change_ends_one() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -157,6 +160,7 @@ fn a_stop_cancels_a_preview_on_its_way_and_a_slide_change_ends_one() {
 fn typing_ends_a_preview_before_any_undo_step() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -195,6 +199,7 @@ fn typing_ends_a_preview_before_any_undo_step() {
 fn enter_then_blur_sends_one_duration() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -235,6 +240,7 @@ fn enter_then_blur_sends_one_duration() {
 fn two_fields_sent_before_a_read_both_land() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -289,6 +295,7 @@ fn two_fields_sent_before_a_read_both_land() {
 fn an_undone_duration_is_not_sent_again() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -334,6 +341,7 @@ fn an_undone_duration_is_not_sent_again() {
 fn two_effects_take_the_same_value_before_a_read() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

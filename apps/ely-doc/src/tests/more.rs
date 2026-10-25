@@ -19,6 +19,7 @@ fn macro_fodt(cx: &mut TestAppContext) -> String {
 fn zip_macro_checks_read_real_kernel_files() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -48,6 +49,7 @@ fn zip_macro_checks_read_real_kernel_files() {
 fn a_local_template_with_macros_opens_in_risk_mode() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -70,6 +72,7 @@ fn a_local_template_with_macros_opens_in_risk_mode() {
 fn select_all_alone_leaves_the_tab_clean() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -95,6 +98,7 @@ fn select_all_alone_leaves_the_tab_clean() {
 fn keep_mine_waits_and_two_queued_saves_never_crash() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -146,6 +150,7 @@ fn keep_mine_waits_and_two_queued_saves_never_crash() {
 fn a_kernel_write_failure_stays_visible() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -153,8 +158,8 @@ fn a_kernel_write_failure_stays_visible() {
     let id = blank(&mut cx, &docs);
     type_into(&mut cx, &docs, "RetainedText");
     let work = cx.update(|app| docs.read(app).active_tab().expect("a tab").work.clone());
-    std::fs::remove_dir_all(&work).expect("drops the scratch");
-    std::fs::write(&work, b"not a folder").expect("blocks it");
+    let blocked = work.join("save.docx");
+    std::fs::create_dir(&blocked).expect("blocks the export target");
     let target = dir.path().join("failure.docx");
     with_window(&mut cx, &docs, |docs, window, cx| {
         docs.write_as(id, target.clone(), None, window, cx)
@@ -164,8 +169,7 @@ fn a_kernel_write_failure_stays_visible() {
         !tab.exporting && tab.session.state() == ely_files::SaveState::SaveFailed
     });
     assert!(!target.exists(), "the failure writes nothing");
-    std::fs::remove_file(&work).expect("unblocks");
-    std::fs::create_dir_all(&work).expect("the scratch returns");
+    std::fs::remove_dir(&blocked).expect("unblocks the export target");
     with_window(&mut cx, &docs, |docs, window, cx| {
         docs.write_as(id, target.clone(), None, window, cx)
     });
@@ -185,6 +189,7 @@ fn a_kernel_write_failure_stays_visible() {
 fn an_edit_that_just_landed_still_asks_and_selection_does_not() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -220,6 +225,7 @@ fn an_edit_that_just_landed_still_asks_and_selection_does_not() {
 fn a_quit_from_either_window_asks_first() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -251,6 +257,7 @@ fn a_quit_from_either_window_asks_first() {
 fn closing_a_tab_takes_its_export_dialog() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -268,6 +275,7 @@ fn closing_a_tab_takes_its_export_dialog() {
 fn a_tab_on_a_vanished_folder_takes_no_other_file() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -289,6 +297,7 @@ fn a_tab_on_a_vanished_folder_takes_no_other_file() {
 fn an_edit_after_a_save_raced_it_counts_again() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

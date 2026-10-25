@@ -34,6 +34,7 @@ pub(super) fn deck(cx: &mut TestAppContext, dir: &Path) -> Option<Entity<Deck>> 
         ely_ui::i18n::install(cx);
     });
     let worker = Arc::new(Mutex::new(worker));
+    cx.update(|app| ely_ui::testing::reap_on_quit(&worker, app, ely_lok::Worker::shutdown));
     let window = cx.add_window(|_, _| gpui::Empty);
     let deck = cx
         .update_window(window.into(), |_, window, app| {
@@ -99,6 +100,7 @@ fn quiet(cx: &TestAppContext, deck: &Entity<Deck>) {
 fn a_blank_deck_grows_and_every_slide_has_a_picture() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = deck(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -132,6 +134,7 @@ fn a_blank_deck_grows_and_every_slide_has_a_picture() {
 fn design_changes_reach_the_kernel_and_repaint() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = deck(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -187,6 +190,7 @@ fn design_changes_reach_the_kernel_and_repaint() {
 fn templates_open_as_untitled_decks() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = deck(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -208,6 +212,7 @@ fn templates_open_as_untitled_decks() {
 fn the_master_view_comes_and_goes() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = deck(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -262,6 +267,7 @@ fn pictures_match(cx: &mut TestAppContext, deck: &Entity<Deck>) {
 fn undoing_a_resize_repaints_every_slide() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = deck(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -304,6 +310,7 @@ fn undoing_a_resize_repaints_every_slide() {
 fn a_failed_picture_waits_for_the_next_read() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = deck(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -356,6 +363,7 @@ fn undo_steps(cx: &mut TestAppContext, deck: &Entity<Deck>) -> usize {
 fn the_same_size_twice_is_one_step() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = deck(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -418,6 +426,7 @@ fn both(cx: &mut TestAppContext, deck: &Entity<Deck>, first: &str, then: &str) {
 fn undoing_a_master_edit_repaints_its_slides() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = branded(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -434,6 +443,7 @@ fn undoing_a_master_edit_repaints_its_slides() {
 fn an_edit_right_after_undo_still_repaints() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = branded(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -445,6 +455,7 @@ fn an_edit_right_after_undo_still_repaints() {
 fn leaving_text_edit_repaints_the_picture() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = deck(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

@@ -14,6 +14,7 @@ fn rule(app: &gpui::App, book: &Entity<Book>) -> Option<(String, Validation)> {
 fn a_dialog_asked_from_a_workbook_left_behind_is_dropped() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -69,6 +70,7 @@ fn a_dialog_asked_from_a_workbook_left_behind_is_dropped() {
 fn rules_set_in_place_reach_the_cell_and_clear() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -103,6 +105,7 @@ fn rules_set_in_place_reach_the_cell_and_clear() {
 fn the_panel_follows_a_sheet_switch_at_one_address() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -138,6 +141,7 @@ fn the_panel_follows_a_sheet_switch_at_one_address() {
 fn a_format_code_lands_in_the_workbook_that_asked() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

@@ -194,6 +194,8 @@ pub trait Closing: Host {
 
     /// Releases the kernel document, registry entry and scratch folder.
     fn close_tab(&mut self, id: u64, cx: &mut Context<Self>) {
+        let Some(work) = self.tab(id).map(|tab| tab.work.clone()) else { return };
+        let root = self.core().work.clone();
         let Some(doc) = self.release_tab(id, cx) else {
             return;
         };
@@ -202,7 +204,9 @@ pub trait Closing: Host {
         cx.spawn(async move |this, cx| {
             let closed = cx
                 .background_spawn(async move {
-                    Self::Engine::close(&mut worker.lock().expect("the worker lock"), doc)
+                    Self::Engine::close(&mut worker.lock().expect("the worker lock"), doc)?;
+                    remove_work(root, work);
+                    Ok::<(), std::io::Error>(())
                 })
                 .await;
             if let Err(error) = closed
@@ -242,9 +246,6 @@ pub trait Closing: Host {
         if core.active == Some(id) {
             core.active = core.tabs.last().map(|tab| tab.id);
         }
-        if let Err(error) = std::fs::remove_dir_all(&tab.work) {
-            log::warn!("office: scratch {} stays: {error}", tab.work.display());
-        }
         log::info!("office: closed {}", tab.name);
         cx.notify();
         Some(tab.doc)
@@ -252,3 +253,16 @@ pub trait Closing: Host {
 }
 
 impl<H: Host> Closing for H {}
+
+pub(crate) fn remove_work(root: PathBuf, work: PathBuf) {
+    let target = match crate::paths::scratch(&root, &work) {
+        Ok(target) => target,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => return log::warn!("office: scratch {} stays: {error}", work.display()),
+    };
+    if let Err(error) = std::fs::remove_dir_all(&target)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        log::warn!("office: scratch {} stays: {error}", target.display());
+    }
+}

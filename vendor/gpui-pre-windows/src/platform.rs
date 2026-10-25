@@ -177,6 +177,24 @@ impl Drop for PowerRequest {
 }
 
 impl WindowsPlatform {
+    fn save_path(
+        &self,
+        directory: &Path,
+        name: Option<&str>,
+        extension: Option<&str>,
+    ) -> Receiver<Result<Option<PathBuf>>> {
+        let directory = directory.to_owned();
+        let name = name.map(str::to_owned);
+        let extension = extension.map(str::to_owned);
+        let owner = self
+            .find_current_active_window()
+            .and_then(|hwnd| self.window_from_hwnd(hwnd))
+            .map(|window| window.dialog_owner.clone());
+        crate::dialog::show_dialog(owner, &self.foreground_executor, move |window| {
+            file_save_dialog(directory, name, extension, Some(window))
+        })
+    }
+
     pub fn new(headless: bool) -> Result<Self> {
         unsafe {
             OleInitialize(None).context("unable to initialize Windows OLE")?;
@@ -807,15 +825,16 @@ impl Platform for WindowsPlatform {
         directory: &Path,
         suggested_name: Option<&str>,
     ) -> Receiver<Result<Option<PathBuf>>> {
-        let directory = directory.to_owned();
-        let suggested_name = suggested_name.map(|s| s.to_owned());
-        let owner = self
-            .find_current_active_window()
-            .and_then(|hwnd| self.window_from_hwnd(hwnd))
-            .map(|window| window.dialog_owner.clone());
-        crate::dialog::show_dialog(owner, &self.foreground_executor, move |window| {
-            file_save_dialog(directory, suggested_name, Some(window))
-        })
+        self.save_path(directory, suggested_name, None)
+    }
+
+    fn prompt_for_new_file(
+        &self,
+        directory: &Path,
+        suggested_name: Option<&str>,
+        extension: &str,
+    ) -> Receiver<Result<Option<PathBuf>>> {
+        self.save_path(directory, suggested_name, Some(extension))
     }
 
     fn can_select_mixed_files_and_dirs(&self) -> bool {
@@ -1540,6 +1559,7 @@ fn file_open_dialog(
 fn file_save_dialog(
     directory: PathBuf,
     suggested_name: Option<String>,
+    extension: Option<String>,
     window: Option<HWND>,
 ) -> Result<Option<PathBuf>> {
     let dialog: IFileSaveDialog = unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)? };
@@ -1561,14 +1581,7 @@ fn file_save_dialog(
         };
     }
 
-    if let Some(suggested_name) = suggested_name {
-        unsafe {
-            dialog
-                .SetFileName(&HSTRING::from(suggested_name))
-                .context("failed to set file name")
-                .log_err()
-        };
-    }
+    crate::save_dialog::configure(&dialog, suggested_name.as_deref(), extension.as_deref())?;
 
     unsafe {
         dialog.SetFileTypes(&[Common::COMDLG_FILTERSPEC {

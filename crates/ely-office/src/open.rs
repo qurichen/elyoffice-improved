@@ -77,6 +77,11 @@ pub trait Opening: Host {
 
     /// Opens a user file with its password.
     fn open_with(&mut self, path: PathBuf, password: String, cx: &mut Context<Self>) {
+        match crate::paths::inside(&self.core().work, &path) {
+            Ok(true) => return self.toast(text(cx, "office.error.work", &[]), ely_gpui_component::primitives::Severity::Danger, cx),
+            Ok(false) => {}
+            Err(error) => return self.failed_open(&path.display().to_string(), &error, cx),
+        }
         match self.core_mut().sessions.open(&path, false) {
             Ok(Open::Focus(registry)) => {
                 let core = self.core_mut();

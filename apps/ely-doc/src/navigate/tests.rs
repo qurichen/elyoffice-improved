@@ -60,6 +60,7 @@ fn cursor_y(app: &gpui::App, docs: &Entity<Docs>) -> Option<i32> {
 fn headings_and_pages_jump_and_back_returns() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -152,6 +153,7 @@ fn headings_and_pages_jump_and_back_returns() {
 fn the_current_heading_follows_the_cursor_across_columns() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -185,6 +187,7 @@ fn the_current_heading_follows_the_cursor_across_columns() {
 fn pdfs_export_a_range_and_locked_files_ask() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -262,6 +265,7 @@ fn pdfs_export_a_range_and_locked_files_ask() {
 fn a_hidden_navigator_reads_nothing() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -295,6 +299,7 @@ impl gpui::Render for Host {
 fn an_outline_click_goes_where_its_row_was_drawn() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -353,6 +358,7 @@ const SPELLED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 fn a_font_found_by_its_search_name_is_not_missing() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

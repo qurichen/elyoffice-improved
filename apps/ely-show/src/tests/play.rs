@@ -57,6 +57,7 @@ pub(super) fn three_slides(cx: &mut TestAppContext, deck: &Entity<Deck>) {
 fn a_show_plays_clicks_skips_hidden_and_ends() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -99,6 +100,7 @@ fn a_show_plays_clicks_skips_hidden_and_ends() {
 fn from_here_starts_on_the_shown_slide_even_hidden() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -118,6 +120,7 @@ fn from_here_starts_on_the_shown_slide_even_hidden() {
 fn a_click_on_media_finds_it_and_elsewhere_does_not() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -150,6 +153,7 @@ fn a_click_on_media_finds_it_and_elsewhere_does_not() {
 fn a_second_start_says_the_show_is_busy() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -174,6 +178,7 @@ fn a_second_start_says_the_show_is_busy() {
 fn a_start_left_for_another_tab_says_so() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

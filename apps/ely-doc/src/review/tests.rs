@@ -21,6 +21,7 @@ fn panel(cx: &mut TestAppContext, docs: &Entity<Docs>) -> Entity<Review> {
 fn comments_thread_and_changes_accept_or_reject() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -105,6 +106,7 @@ fn one_unreadable_time_spares_the_other_notes() {
     // Through the refresh path: changes stay, the line names both.
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = gpui::TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = crate::tests::docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

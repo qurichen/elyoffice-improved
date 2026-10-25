@@ -18,7 +18,7 @@ use gpui::{
 };
 
 /// The release server's newest release, listed by its API.
-const LATEST: &str = "https://git.zacharyzhang.com/api/v1/repos/ZacharyZhang-NY/ElyOffice/releases/latest";
+const LATEST: &str = "https://api.github.com/repos/qurichen/elyoffice-improved/releases/latest";
 /// The argument that runs this binary as the installer.
 const INSTALL: &str = "--ely-install-update";
 
@@ -382,6 +382,11 @@ pub(crate) fn offer_for_tests(cx: &mut App) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_feed_stays_on_the_improved_fork() {
+        assert_eq!(LATEST, "https://api.github.com/repos/qurichen/elyoffice-improved/releases/latest");
+    }
+
     fn release(version: &str, url: &str) -> Release {
         Release {
             version: semver::Version::parse(version).expect("a version"),
@@ -445,3 +450,4 @@ mod tests {
         });
     }
 }
+

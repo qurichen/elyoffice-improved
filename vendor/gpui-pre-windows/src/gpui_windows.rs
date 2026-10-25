@@ -13,6 +13,7 @@ mod display;
 mod events;
 mod keyboard;
 mod platform;
+mod save_dialog;
 mod system_notifications;
 mod system_settings;
 mod util;

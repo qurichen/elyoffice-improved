@@ -97,6 +97,7 @@ mod tests {
     #[test]
     fn kernel_status_takes_the_interface_language() {
         let cx = gpui::TestAppContext::single();
+        let _quit = ely_ui::testing::quit_on_drop(&cx);
         cx.update(|app| {
             ely_ui::settings::install_defaults(app);
             ely_ui::i18n::install(app);

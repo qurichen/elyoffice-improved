@@ -4,8 +4,14 @@ use std::{collections::HashMap, io, sync::Mutex};
 
 use crate::ipc::{self, Pack, Unpack, tag};
 
-fn revisions() -> &'static Mutex<HashMap<u64, u64>> {
-    static REVISIONS: std::sync::OnceLock<Mutex<HashMap<u64, u64>>> = std::sync::OnceLock::new();
+#[derive(Clone, Copy, Default)]
+struct Revision {
+    current: u64,
+    last_input: u64,
+}
+
+fn revisions() -> &'static Mutex<HashMap<u64, Revision>> {
+    static REVISIONS: std::sync::OnceLock<Mutex<HashMap<u64, Revision>>> = std::sync::OnceLock::new();
     REVISIONS.get_or_init(Default::default)
 }
 
@@ -19,7 +25,7 @@ pub fn session() -> u64 {
         (u64::from(std::process::id()) ^ u64::from(nanos)) & 0xffff_ffff
     });
     let id = (prefix << 32) | NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    revisions().lock().expect("the revisions lock").insert(id, 0);
+    revisions().lock().expect("the revisions lock").insert(id, Revision::default());
     id
 }
 
@@ -29,7 +35,7 @@ pub fn forget(id: u64) {
 
 pub fn of(id: u64) -> io::Result<u64> {
     let revisions = revisions().lock().expect("the revisions lock");
-    revisions.get(&id).copied().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no such document"))
+    revisions.get(&id).map(|revision| revision.current).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no such document"))
 }
 
 /// The revision now, answered.
@@ -37,13 +43,24 @@ pub fn current(unpack: &mut Unpack) -> io::Result<Vec<u8>> {
     Ok(Pack::new().u64(of(unpack.u64()?)?).bytes())
 }
 
-/// Refuses unless the document is at the revision asked for.
+/// Numbered targets survive navigation, not other input.
 pub fn expect(unpack: &mut Unpack) -> io::Result<Vec<u8>> {
+    check(unpack, false)
+}
+
+/// Selection targets require the exact original context.
+pub fn expect_at(unpack: &mut Unpack) -> io::Result<Vec<u8>> {
+    check(unpack, true)
+}
+
+fn check(unpack: &mut Unpack, selection: bool) -> io::Result<Vec<u8>> {
     let (id, expected) = (unpack.u64()?, unpack.u64()?);
-    let now = of(id)?;
-    match now == expected {
+    let revisions = revisions().lock().expect("the revisions lock");
+    let now = revisions.get(&id).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no such document"))?;
+    let valid = if selection { now.current == expected } else { now.last_input <= expected && expected <= now.current };
+    match valid {
         true => Ok(Vec::new()),
-        false => Err(io::Error::other(format!("{}document {id} is at {now}, not {expected}", ipc::STALE))),
+        false => Err(io::Error::other(format!("{}document {id} is at {}, not {expected}", ipc::STALE, now.current))),
     }
 }
 
@@ -51,7 +68,7 @@ pub fn expect(unpack: &mut Unpack) -> io::Result<Vec<u8>> {
 pub fn bump(request: u8, payload: &[u8]) {
     let changes = matches!(
         request,
-        tag::POST_KEY | tag::TURN | tag::POST_MOUSE | tag::GRAPHIC | tag::POST_TEXT | tag::POST_UNO | tag::PASTE | tag::CUT | tag::COMPLETE_FUNCTION
+        tag::POST_KEY | tag::TURN | tag::POST_MOUSE | tag::GRAPHIC | tag::POST_TEXT | tag::POST_UNO | tag::PASTE | tag::CUT | tag::COMPLETE_FUNCTION | tag::SHOW_SHEET
     );
     let mut unpack = Unpack::new(payload);
     let Ok(id) = unpack.u64() else {
@@ -61,7 +78,10 @@ pub fn bump(request: u8, payload: &[u8]) {
         return;
     }
     if let Some(revision) = revisions().lock().expect("the revisions lock").get_mut(&id) {
-        *revision += 1;
+        revision.current += 1;
+        if request != tag::SHOW_SHEET {
+            revision.last_input = revision.current;
+        }
     }
 }
 

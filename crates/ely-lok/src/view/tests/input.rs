@@ -142,6 +142,7 @@ fn a_drag_selects_and_events_carry_the_cursor() {
         return;
     };
     let cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let (view, _) = cx.update(|app| live_view(app, &install));
     cx.update(|app| {
         view.update(app, |view, _| {
@@ -247,6 +248,12 @@ fn the_clipboard_moves_html_tables_and_images() {
         text.contains(&"left".to_string()) && text.contains(&"right".to_string()),
         "{text:?}"
     );
+    // Plain text from another app, with no HTML beside it.
+    clipboard::write(&Clip::Text("outside words".into())).expect("the text writes");
+    cx.update(|app| view.update(app, |view, _| view.send(crate::view::input::Input::Paste)));
+    flush(&cx);
+    let text = saved(&view, &mut cx);
+    assert!(text.iter().any(|line| line.contains("outside words")), "{text:?}");
 
     let mut png = Vec::new();
     image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 0, 0, 255]))

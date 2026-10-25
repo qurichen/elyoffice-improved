@@ -305,6 +305,7 @@ mod tests {
     #[test]
     fn one_unreadable_time_spares_the_other_comments() {
         let cx = TestAppContext::single();
+        let _quit = ely_ui::testing::quit_on_drop(&cx);
         cx.update(|cx| ely_ui::i18n::install_as("en-US", cx));
         let remark = |id: &str, at: &str| Remark {
             id: id.into(),

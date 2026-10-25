@@ -1,0 +1,18 @@
+Windows: avoid doubled separators in directory enumeration
+
+OpenDirectory receives a directory path with a trailing separator. Reversed
+suffix selection appends a second separator, tolerated by ordinary Win32
+paths but rejected for extended-length paths. Select the suffix according
+to the separator already present. Keep the requested profile location.
+
+--- a/sal/osl/w32/file_dirvol.cxx
++++ b/sal/osl/w32/file_dirvol.cxx
+@@ -359,7 +359,7 @@
+         return nullptr;
+ 
+     std::u16string_view suffix;
+-    if (!path.endsWith(u"\\"))
++    if (path.endsWith(u"\\"))
+         suffix = u"*.*";
+     else
+         suffix = u"\\*.*";

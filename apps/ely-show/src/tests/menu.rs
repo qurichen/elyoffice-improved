@@ -83,6 +83,7 @@ fn table_height(objects: &Objects) -> Option<i64> {
 fn right_clicks_open_powerpoint_rows_on_each_target() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

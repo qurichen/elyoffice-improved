@@ -32,6 +32,7 @@ fn book(cx: &mut TestAppContext, dir: &Path) -> Option<(WindowHandle<Blank>, Ent
         ely_ui::i18n::install(cx);
     });
     let worker = Arc::new(Mutex::new(worker));
+    cx.update(|app| ely_ui::testing::reap_on_quit(&worker, app, ely_lok::Worker::shutdown));
     let window = cx.add_window(|_, _| Blank);
     let book = cx
         .update_window(window.into(), |_, window, app| {
@@ -103,6 +104,7 @@ fn blank(cx: &mut TestAppContext, book: &Entity<Book>) {
 fn a_new_workbook_saves_xlsx_and_keeps_its_sheets() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -139,6 +141,7 @@ fn a_new_workbook_saves_xlsx_and_keeps_its_sheets() {
 fn deleting_names_what_refers_and_merging_asks_when_data_would_hide() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -206,6 +209,7 @@ fn deleting_names_what_refers_and_merging_asks_when_data_would_hide() {
 fn a_queued_entry_lands_before_the_sheet_switches() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -256,6 +260,7 @@ fn a_queued_entry_lands_before_the_sheet_switches() {
 fn a_switch_stays_with_its_workbook() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -307,6 +312,7 @@ fn a_switch_stays_with_its_workbook() {
 fn the_bars_follow_the_active_workbook() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -346,6 +352,7 @@ fn the_bars_follow_the_active_workbook() {
 fn a_delete_stays_with_its_workbook() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -394,8 +401,10 @@ fn a_delete_stays_with_its_workbook() {
 }
 
 mod analysis;
+mod aids;
 mod data;
 mod menu;
+mod merges;
 mod names;
 mod numbers;
 mod output;

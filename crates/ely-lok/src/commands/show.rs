@@ -1,6 +1,6 @@
 //! Presentation rows: slides, design, charts, notes, comments.
 
-use super::{Arg, Check, Command, command};
+use super::{Arg, Check, Command, Target, command};
 
 /// Slide management and design (SHOW-01, 02).
 pub(super) const ROWS: &[Command] = &[
@@ -89,12 +89,15 @@ pub(super) const ROWS: &[Command] = &[
         ],
         Check::Undoable,
     ),
-    command(
-        "notes.set",
-        ".uno:SlideNotes",
-        &[Arg::Loose("Text"), Arg::Int("Part", "long", 0, 9_999)],
-        Check::Undoable,
-    ),
+    Command {
+        target: Target::Document,
+        ..command(
+            "notes.set",
+            ".uno:SlideNotes",
+            &[Arg::Loose("Text"), Arg::Int("Part", "long", 0, 9_999)],
+            Check::Undoable,
+        )
+    },
     command(
         "remark.edit",
         ".uno:EditAnnotation",

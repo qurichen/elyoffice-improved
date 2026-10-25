@@ -5,6 +5,8 @@ mod run;
 pub mod settings;
 mod shell;
 pub mod tasks;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 mod theme;
 pub mod updates;
 pub mod watching;

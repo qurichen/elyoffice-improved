@@ -12,6 +12,7 @@ pub use crate::events::{A11y, Cell, Events, Function, MIXED, Mark, Rect, Request
 /// The pinned LibreOffice build the worker must report (LOK-01).
 pub const BUILD_ID: &str = "8221e31b3ac356a1623c672912a3d2b492f7e3d1";
 
+mod commands;
 mod doc;
 mod feed;
 mod frames;
@@ -86,6 +87,11 @@ impl Doc {
         self.kind == 1
     }
 
+    /// Same document, including its worker session.
+    pub(crate) fn same_document(&self, other: &Doc) -> bool {
+        self.worker == other.worker && self.id == other.id
+    }
+
     /// Whether this handle saw a later state than `other`.
     pub fn newer_than(&self, other: &Doc) -> bool {
         self.rev > other.rev
@@ -95,6 +101,11 @@ impl Doc {
 /// Whether `error` refused a request made for an older state.
 pub fn is_stale(error: &io::Error) -> bool {
     error.to_string().starts_with(ipc::STALE)
+}
+
+/// Whether `error` refused an undo or redo with no history.
+pub fn is_nothing(error: &io::Error) -> bool {
+    error.to_string().starts_with(ipc::NOTHING)
 }
 
 static SESSIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -151,6 +162,8 @@ impl Worker {
             .arg(install)
             .arg(profile_dir)
             .env("SAL_FORCE_HIDPI_SCALING", "1")
+            // Enable the bundled English dictionaries in LOK.
+            .env("LOK_ALLOWLIST_LANGUAGES", "en")
             // A killed worker's profile lock would hang the next.
             .env("SAL_NOLOCK_PROFILE", "1");
         // Linux tiles via cairo are BGRA; Skia there is RGBA.
@@ -307,33 +320,6 @@ impl Worker {
             tag::PASTE,
             &Pack::new().u64(self.doc_id(doc)?).str(mime).blob(data).bytes(),
         )?;
-        Ok(())
-    }
-
-    /// Runs a table command; the worker confirms it took (LOK-02).
-    pub fn run(&mut self, doc: &Doc, id: &str, values: &[&str]) -> io::Result<()> {
-        self.run_all(doc, &[(id, values)])
-    }
-
-    /// Commands made from one read; the state is checked once.
-    pub fn run_all(&mut self, doc: &Doc, commands: &[(&str, &[&str])]) -> io::Result<()> {
-        let mut addressed = false;
-        for (id, values) in commands {
-            let command = crate::commands::find(id)?;
-            command.args_json(values)?;
-            addressed |= command.addressed(values);
-        }
-        // Numbers hold only in the state they were read.
-        if addressed {
-            self.request(tag::EXPECT, &Pack::new().u64(self.doc_id(doc)?).u64(doc.rev).bytes())?;
-        }
-        for (id, values) in commands {
-            let pack = values.iter().fold(
-                Pack::new().u64(self.doc_id(doc)?).str(id).u64(values.len() as u64),
-                |pack, value| pack.str(value),
-            );
-            self.request(tag::POST_UNO, &pack.bytes())?;
-        }
         Ok(())
     }
 

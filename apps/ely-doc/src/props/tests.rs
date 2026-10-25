@@ -35,6 +35,7 @@ fn run(cx: &mut TestAppContext, props: &Entity<Props>, id: &str, values: &[&str]
 fn the_panel_formats_text_paragraphs_and_styles() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -119,6 +120,7 @@ fn the_panel_formats_text_paragraphs_and_styles() {
 fn bad_values_report_and_the_panel_follows_the_tab() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -183,6 +185,7 @@ fn update_follows_the_character_style_under_the_cursor() {
     const SHIFT: i32 = 0x1000;
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -265,6 +268,7 @@ fn update_follows_the_character_style_under_the_cursor() {
 fn quick_spacing_edits_keep_each_other() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -329,6 +333,7 @@ fn in_a_table_the_table_group_comes_first_and_folds_stay_put() {
     const UP: i32 = 1025;
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

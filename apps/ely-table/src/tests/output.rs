@@ -5,6 +5,8 @@ use super::data::{asked, cells, quiet, run};
 use super::*;
 use crate::output::Format;
 
+mod encoding;
+
 /// The active tab's kernel read, after its input.
 fn read<T>(
     cx: &mut TestAppContext,
@@ -37,6 +39,7 @@ fn type_in(
 fn a_csv_opens_through_its_choices_and_keeps_codes() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -80,6 +83,7 @@ fn a_csv_opens_through_its_choices_and_keeps_codes() {
 fn a_wrong_encoding_blocks_the_import() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -104,6 +108,7 @@ fn a_wrong_encoding_blocks_the_import() {
 fn exports_write_the_shown_sheet_as_text() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -113,15 +118,17 @@ fn exports_write_the_shown_sheet_as_text() {
     run(&mut cx, &book, "cell.goto", &["B1"]);
     run(&mut cx, &book, "cell.enter", &["a;b"]);
     let id = cx.update(|app| book.read(app).core.tabs[0].id);
+    // The kernel ends rows the system's way.
+    let end = if cfg!(windows) { "\r\n" } else { "\n" };
     for (format, name, text) in [
-        (Format::Csv, "out.csv", "3,a;b\n"),
-        (Format::Tsv, "out.tsv", "3\ta;b\n"),
+        (Format::Csv, "out.csv", "3,a;b"),
+        (Format::Tsv, "out.tsv", "3\ta;b"),
     ] {
         let path = dir.path().join(name);
         update(&mut cx, &book, |book, cx| book.export_to(id, path.clone(), format, cx));
         settle(&cx, |_| path.exists());
         quiet(&cx, &book);
-        assert_eq!(std::fs::read_to_string(&path).expect("reads"), text);
+        assert_eq!(std::fs::read_to_string(&path).expect("reads"), format!("{text}{end}"));
     }
     let pdf = dir.path().join("out.pdf");
     update(&mut cx, &book, |book, cx| book.export_to(id, pdf.clone(), Format::Pdf, cx));
@@ -148,6 +155,7 @@ fn rows(dialog: &Dialog) -> &Entity<TextInput> {
 fn page_setup_applies_titles_area_and_page() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -197,6 +205,7 @@ fn protected(cx: &mut TestAppContext, book: &Entity<Book>) -> bool {
 fn a_wrong_password_leaves_the_sheet_protected() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -230,6 +239,7 @@ fn a_wrong_password_leaves_the_sheet_protected() {
 fn a_new_link_names_its_unrefreshed_source() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -262,6 +272,7 @@ fn a_new_link_names_its_unrefreshed_source() {
 fn the_checked_bytes_import_even_if_the_file_changes() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -280,6 +291,7 @@ fn the_checked_bytes_import_even_if_the_file_changes() {
 fn a_closed_dialogs_scan_never_lands_in_the_next() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -318,6 +330,7 @@ fn a_closed_dialogs_scan_never_lands_in_the_next() {
 fn the_preview_reads_what_the_kernel_imports() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -347,6 +360,7 @@ fn the_preview_reads_what_the_kernel_imports() {
 fn text_files_wait_their_turn_for_the_import_dialog() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -357,13 +371,13 @@ fn text_files_wait_their_turn_for_the_import_dialog() {
     }
     // Another dialog is open; neither import may replace it.
     update(&mut cx, &book, |book, cx| {
-        book.dialog = Some(Dialog::Merge { tab: 0 });
+        book.dialog = Some(Dialog::Export { tab: 0, format: Format::Csv });
         for path in &paths {
             book.ask_import(path.clone(), cx);
         }
     });
     settle(&cx, |app| book.read(app).imports.len() == 2);
-    cx.update(|app| assert!(matches!(book.read(app).dialog, Some(Dialog::Merge { .. }))));
+    cx.update(|app| assert!(matches!(book.read(app).dialog, Some(Dialog::Export { .. }))));
     update(&mut cx, &book, |book, cx| {
         book.dialog = None;
         cx.notify();
@@ -382,6 +396,7 @@ fn text_files_wait_their_turn_for_the_import_dialog() {
 fn an_import_waits_behind_a_dialog_that_displaces_it() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -418,6 +433,7 @@ fn an_import_waits_behind_a_dialog_that_displaces_it() {
 fn closing_a_tab_takes_its_dialog_and_frees_the_import() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -441,6 +457,7 @@ fn closing_a_tab_takes_its_dialog_and_frees_the_import() {
 fn a_whole_column_print_area_still_applies() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -468,33 +485,4 @@ fn a_whole_column_print_area_still_applies() {
     });
     let layout = read(&mut cx, &book, sheet::print_layout, sheet::LAYOUT);
     assert!(layout.landscape, "applied with {shown}");
-}
-
-#[test]
-fn the_default_encoding_follows_the_apps_language() {
-    use ely_gpui_component::i18n::I18n;
-    use ely_lok::sheet::csv::Encoding;
-    let dir = tempfile::tempdir().expect("a temp dir");
-    let mut cx = TestAppContext::single();
-    let Some((_window, book)) = book(&mut cx, dir.path()) else {
-        eprintln!("SKIP: no LOK build");
-        return;
-    };
-    let path = dir.path().join("gb.csv");
-    // 你好 in GB18030: not UTF-8.
-    std::fs::write(&path, [0xC4, 0xE3, 0xBA, 0xC3, b'\n']).expect("writes");
-    for (tag, expected) in [("zh-CN", Encoding::Gb18030), ("en-US", Encoding::Windows1252)] {
-        cx.update(|app| I18n::set_locale(tag, app));
-        update(&mut cx, &book, |book, cx| book.ask_import(path.clone(), cx));
-        asked(&cx, &book, |dialog| matches!(dialog, Dialog::Import(_)));
-        let found = cx.update(|app| match book.read(app).dialog.as_ref() {
-            Some(Dialog::Import(pending)) => pending.how.encoding,
-            _ => unreachable!("an import dialog"),
-        });
-        assert_eq!(found, expected, "{tag}");
-        update(&mut cx, &book, |book, cx| {
-            book.dialog = None;
-            cx.notify();
-        });
-    }
 }

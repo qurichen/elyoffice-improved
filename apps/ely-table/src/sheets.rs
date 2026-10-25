@@ -230,18 +230,38 @@ impl Book {
         cx.notify();
     }
 
-    pub(crate) fn ask_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(tab), Some((index, name, _))) = (self.core.active, self.current_sheet()) else {
+    pub(crate) fn ask_rename(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.core.active else {
             return self.warn("command.blocked.no_document", cx);
         };
-        // The list shown was read in this state.
-        let Some(at) = self.read_at(tab, cx) else {
-            return self.warn("command.blocked.no_document", cx);
-        };
-        let field = cx.new(|cx| TextInput::new(window, cx));
-        field.update(cx, |field, cx| field.set_text(name, cx));
-        self.open_dialog(Dialog::Rename { tab, at, index, field });
-        cx.notify();
+        if !self.settled(tab, cx) {
+            return self.when_settled(tab, move |book, window, cx| {
+                if book.core.active == Some(tab) {
+                    book.ask_rename(window, cx);
+                }
+            });
+        }
+        self.ask_in(
+            tab,
+            |worker, doc| {
+                let at = worker.now(doc)?;
+                let sheets = doc.sheets(worker)?;
+                let index = sheets.current;
+                let name = sheets.list.get(index)
+                    .ok_or_else(|| io::Error::other("the current sheet is missing"))?.name.clone();
+                Ok((at, index, name))
+            },
+            move |book, read, window, cx| match read {
+                Ok((at, index, name)) => {
+                    let field = cx.new(|cx| TextInput::new(window, cx));
+                    field.update(cx, |field, cx| field.set_text(name, cx));
+                    book.open_dialog(Dialog::Rename { tab, at, index, field });
+                    cx.notify();
+                }
+                Err(error) => book.engine_failed(&error.to_string(), cx),
+            },
+            cx,
+        );
     }
 
     /// Asks before a delete, naming what refers (UX-07).

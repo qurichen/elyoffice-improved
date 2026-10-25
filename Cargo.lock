@@ -2155,6 +2155,7 @@ version = "0.1.8"
 dependencies = [
  "anyhow",
  "arboard",
+ "clipboard-win",
  "core-foundation 0.10.0",
  "core-video",
  "directories",
@@ -2204,6 +2205,7 @@ dependencies = [
  "image",
  "jiff",
  "log",
+ "lopdf",
  "serde_json",
  "tempfile",
 ]

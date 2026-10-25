@@ -47,6 +47,7 @@ fn a_dark_app_paints_the_page_white() {
         return;
     };
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     cx.update(|app| {
         ely_gpui_component::init_for_tests(app);
         ely_gpui_component::theme::Theme::set_mode_now(ely_gpui_component::theme::Mode::Dark, app);
@@ -62,6 +63,7 @@ fn a_dark_app_paints_the_page_white() {
     let doc = started.load(&crate::file_url(&source)).expect("the document loads");
     let laid = super::super::layout(&mut started, &doc).expect("the layout reads");
     let worker = Arc::new(Mutex::new(started));
+    cx.update(|app| reap_on_quit(&worker, app, crate::Worker::shutdown));
     let shade = || {
         let mut worker = worker.lock().expect("the worker");
         let tile = doc.paint_tile(&mut worker, (1440, 1440, 3840, 3840), (64, 64)).expect("a tile");
@@ -84,12 +86,101 @@ fn a_dark_app_paints_the_page_white() {
 }
 
 #[test]
+fn selection_keeps_document_text_readable_across_themes() {
+    use ely_gpui_component::{
+        devtools::{contrast, over},
+        theme::{ActiveTheme, Mode, Palette, Theme},
+    };
+
+    let Some(install) = crate::client::tests::install() else {
+        eprintln!("SKIP: no pinned LOK build");
+        return;
+    };
+    let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
+    cx.update(ely_gpui_component::init_for_tests);
+    let (view, worker) = cx.update(|app| live_view(app, &install));
+    let doc = cx.update(|app| view.read(app).doc.clone());
+    let shown = view.clone();
+    let window = cx.add_window(move |_, _| Host(shown));
+    worker
+        .lock()
+        .expect("the worker")
+        .run(&doc, "edit.select_all", &[])
+        .expect("select all");
+    assert!(
+        settle(&cx, |app| !view.read(app).selection.is_empty()),
+        "the selection arrives"
+    );
+
+    let mut themes = vec![
+        ("dark".to_string(), Mode::Dark, None),
+        ("light".to_string(), Mode::Light, None),
+    ];
+    for (name, mode, color) in [
+        ("omarchy dark", Mode::Dark, 0x292e42),
+        ("omarchy light", Mode::Light, 0xccd0da),
+    ] {
+        let mut palette = match mode {
+            Mode::Dark => Palette::dark(false),
+            Mode::Light => Palette::light(false),
+        };
+        palette.selection = gpui::rgb(color).into();
+        themes.push((name.to_string(), mode, Some(palette)));
+    }
+    let mut translucent = Palette::dark(false);
+    translucent.selection = gpui::rgb(0x292e42).into();
+    translucent.selection.a = 0.15;
+    themes.push(("translucent".to_string(), Mode::Dark, Some(translucent)));
+
+    for (name, mode, palette) in themes {
+        cx.update(|app| {
+            Theme::set_palette(mode, palette, app);
+            Theme::set_mode_now(mode, app);
+        });
+        cx.update_window(window.into(), |_, window, app| {
+            window.draw(app).clear(app);
+            let source = app.theme().colors.selection;
+            let selected: Vec<_> = window
+                .painted_quads()
+                .into_iter()
+                .filter_map(|quad| quad.background.as_solid())
+                .filter(|color| color.alpha(1.0) == source.alpha(1.0))
+                .collect();
+            assert!(!selected.is_empty(), "{name}: the selection is painted");
+            for color in selected {
+                for (text, background) in [(gpui::black(), paper()), (gpui::white(), gpui::black())]
+                {
+                    let ratio = contrast(over(color, text), over(color, background));
+                    assert!(
+                        ratio >= 4.5,
+                        "{name}: selected text stays readable: {ratio}"
+                    );
+                }
+                assert!(
+                    color.a > 0.0 && color.a <= source.a,
+                    "{name}: the theme's opacity is respected"
+                );
+                if source.a < 0.3 {
+                    assert_eq!(
+                        color.a, source.a,
+                        "{name}: a translucent theme stays unchanged"
+                    );
+                }
+            }
+        })
+        .expect("the window lives");
+    }
+}
+
+#[test]
 fn a_failed_tile_reports_and_retries_on_a_move() {
     let Some(install) = crate::client::tests::install() else {
         eprintln!("SKIP: no pinned LOK build");
         return;
     };
     let cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let (view, _) = cx.update(|app| live_view(app, &install));
     let errors = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     cx.update(|app| {

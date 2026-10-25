@@ -33,6 +33,7 @@ fn send(
 fn clear_buttons_clear_fill_and_outline() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -61,6 +62,7 @@ fn update(cx: &mut TestAppContext, deck: &Entity<Deck>, command: &str, value: &s
 fn a_value_sent_again_after_undo_goes_out() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -110,6 +112,7 @@ fn a_value_sent_again_after_undo_goes_out() {
 fn twin_objects_each_take_the_same_value() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -156,6 +159,7 @@ fn twin_objects_each_take_the_same_value() {
 fn lines_take_an_outline_color_and_width() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -179,6 +183,7 @@ fn lines_take_an_outline_color_and_width() {
 fn an_empty_list_choice_deselects() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -199,6 +204,7 @@ fn an_empty_list_choice_deselects() {
 fn a_mixed_value_can_be_set_to_zero() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -246,6 +252,7 @@ fn a_mixed_value_can_be_set_to_zero() {
 fn a_mixed_autofit_takes_one_rule_for_all() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

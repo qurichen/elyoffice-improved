@@ -150,6 +150,25 @@ pub(super) const ROWS: &[Command] = &[
         &[Arg::Int("aExtraWidth", "unsigned short", 0, 0)],
         Check::Undoable,
     ),
+    // A header edge's double click: one, or the marked ones.
+    command(
+        "columns.fit",
+        ".uno:SetOptimalColumnWidth",
+        &[
+            Arg::Int("aExtraWidth", "unsigned short", 0, 0),
+            Arg::Int("Column", "unsigned short", 1, 16384),
+        ],
+        Check::Undoable,
+    ),
+    command(
+        "rows.fit",
+        ".uno:SetOptimalRowHeight",
+        &[
+            Arg::Int("aExtraHeight", "unsigned short", 0, 0),
+            Arg::Int("Row", "long", 1, 1_048_576),
+        ],
+        Check::Undoable,
+    ),
     // Rows and columns from 0.
     command(
         "select.column",

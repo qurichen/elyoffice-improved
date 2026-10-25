@@ -27,6 +27,7 @@ fn bytes(cx: &mut TestAppContext, show: &Entity<Show>, part: usize) -> Vec<u8> {
 fn both_windows_take_keys_and_a_second_start_waits() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -59,6 +60,7 @@ fn both_windows_take_keys_and_a_second_start_waits() {
 fn from_here_follows_a_slide_picked_just_now() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -78,6 +80,7 @@ fn from_here_follows_a_slide_picked_just_now() {
 fn edits_during_a_show_stay_out_of_it() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -98,6 +101,7 @@ fn edits_during_a_show_stay_out_of_it() {
 fn late_layers_and_jumps_leave_no_trace() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -137,6 +141,7 @@ fn late_layers_and_jumps_leave_no_trace() {
 fn a_finished_exit_stays_gone_as_the_slide_leaves() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -181,6 +186,7 @@ fn a_finished_exit_stays_gone_as_the_slide_leaves() {
 fn media_that_cannot_play_says_why_and_the_show_goes_on() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

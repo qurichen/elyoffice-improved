@@ -304,6 +304,8 @@ pub struct Selection {
     pub top: Vec<String>,
     /// The kernel takes the first row for headers.
     pub header: bool,
+    /// Cells in the range holding anything.
+    pub filled: u64,
 }
 
 /// Parses `.uno:SelectedRange`; None when several ranges are selected.
@@ -315,6 +317,7 @@ pub fn selected_range(json: &str) -> io::Result<Option<Selection>> {
     if range.is_empty() {
         return Ok(None);
     }
+    let filled = value["filled"].as_u64().ok_or_else(bad)?;
     let Some(area) = value["area"].as_array() else {
         return Ok(Some(Selection {
             range: range.to_string(),
@@ -322,6 +325,7 @@ pub fn selected_range(json: &str) -> io::Result<Option<Selection>> {
             data: String::new(),
             top: Vec::new(),
             header: false,
+            filled,
         }));
     };
     let corner = |at: usize| -> io::Result<u32> {
@@ -341,6 +345,7 @@ pub fn selected_range(json: &str) -> io::Result<Option<Selection>> {
         data: value["data"].as_str().ok_or_else(bad)?.to_string(),
         top,
         header: value["header"].as_bool().ok_or_else(bad)?,
+        filled,
     }))
 }
 

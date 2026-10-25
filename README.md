@@ -24,6 +24,26 @@ No speed or memory advantage is claimed; complete interactive, recovery and inst
 发布范围、清理事项与原作者信息 / Publication scope, hygiene and attribution:
 [PUBLICATION.md](PUBLICATION.md).
 
+
+## 最新更新 / Latest update — 2026-10-25
+
+已整合截至第17轮的累计改进：72项内核补丁、保存恢复保护、Windows高缩放与
+深层资料目录修复、上游办公核心补全，以及原文档/选区绑定的安全命令调度。
+第17轮224项测试通过，三应用及工作进程优化构建、表格/演示原生保存重开通过，
+独立审查R1通过。应用和工作进程需配套更新。
+
+Cumulative improvements through round 17 include 72 engine patches, safer
+save/recovery, Windows DPI and deep-profile repairs, selected upstream office-core
+backports, and commands bound to their original document/context. Round 17 passed
+224 distinct tests, optimized app/worker builds, bounded Table/Show native save
+and reopen checks, and independent R1 review. Update apps and worker together.
+
+本次是源码更新，暂不提供安装包。已知限制及关闭窗口后的保留诊断见
+[发布说明 / Publication notes](PUBLICATION.md) 和
+[第17轮验证 / Round 17 validation](docs/windows-validation-round17.md)。
+This is a source update; no installer is provided. Known limits and retained
+window-close diagnostics are documented in the linked records.
+
 ---
 
 # Ely Office
@@ -33,9 +53,11 @@ It is based on [ZacharyZhang-NY/ElyOffice](https://git.zacharyzhang.com/ZacharyZ
 at `0d991e1c715859abd1282981fd46989e7e2319c7`, not a new implementation
 or an official upstream release. Original authorship and licences are retained.
 
-The native Windows engine now builds with all 63 patches. Ninety-three selected
-client/worker regressions pass against it, without skips; this is not the full
-workspace suite. Supported legacy EQ fractions retain editable field semantics,
+The native Windows engine now builds with 72 patches, including a Windows LOK
+logical-DPI correction for enlarged and cropped tiles on high-scaling displays.
+The earlier 93 selected client/worker regressions passed against the 63-patch
+engine; these are historical results, not the full workspace suite.
+Supported legacy EQ fractions retain editable field semantics,
 and the complex native Word sample's eight following paragraphs now match the
 original positions after saving and reopening. Modern chart point-color defaults,
 Windows save/backup DACLs and encrypted recovery profile scoping are repaired.
@@ -44,11 +66,50 @@ GUI binaries also rebuild successfully. Complete interactive/recovery and
 installer checks remain open; native Office still shows other layout differences.
 See [round 8 validation](docs/windows-validation-20261020.md) and
 [round 9 GUI/profile validation](docs/windows-validation-round9.md).
-The current scope and limits are in [round 10 validation](docs/windows-validation-round10.md)
+Historical compatibility scope is in [round 10 validation](docs/windows-validation-round10.md)
 and [round 10 implementation notes](docs/ooxml-fidelity-round10.md).
+Later [round 12 validation](docs/windows-validation-round12.md) records the complete
+Doc/Table/Show application runs and bounded native Doc save/recovery checks.
+[Round 13 validation](docs/windows-validation-round13.md) adds repeatable native
+Table/Show save-and-reopen trials, strict content-reader controls and final
+test-process cleanup review. [Round 14 validation](docs/windows-validation-round14.md)
+fixes the reproduced duplicate-DPI rendering defect at 175% scaling and reruns
+all 209 Doc/Table/Show application tests plus three new image regressions.
+Other DPI configurations, general visual fidelity, broader long-path coverage, encrypted
+native recovery and installer acceptance remain open; these are not general
+Office-parity or long-term stability certifications.
 See [repair evidence](docs/ooxml-fidelity-fixes.md),
 [Windows build notes](docs/windows-build.md) and
 [publication gates](docs/github-publishing.md).
+
+[Upstream integration batch 1](docs/upstream-integration-batch1.md) selectively
+backports office-core fixes from the current GitHub upstream, retaining our
+original 64 patches and local save/recovery protections. The combined build
+passes 284 focused/application tests and native Table/Show save-and-reopen
+trials. This is not the whole upstream0.1.11, an installed update, or a release;
+new components/Mail remain open; at that snapshot the separate deep-profile
+startup repair was still pending.
+
+[Round 15](docs/windows-validation-round15.md) fixes the reproduced Windows
+deep-profile startup failure by correcting directory-mask separators in SAL.
+Requested profile locations are preserved; this is not a system-policy change
+or unrestricted long-path/UNC support. It follows the integration snapshot above.
+
+[Round 16](docs/windows-validation-round16.md) completes Table's merge-content
+check using the existing kernel count. Empty ranges can merge, and formulas
+that display an empty result still require confirmation alongside other data.
+The complete Table suite passes 58 tests, including four new merge regressions.
+
+[Round 17 research and architecture](docs/office-pain-points-architecture.md)
+maps primary Office feedback and extension designs to Ely's command layer.
+Client and view dispatch are separated; read-derived operations check their
+document and revision before running, including merge confirmation after a
+selection or sheet change. Current-selection input keeps its ordered queue.
+Explicit slide notes keep their original page across a plain page switch,
+while edits and page reordering invalidate the old request. Apps and the worker
+must be updated together for the new selection-context check.
+See the [round 17 validation record](docs/windows-validation-round17.md) for
+the tested scope and remaining extension, undo, performance and layout work.
 
 Offline-first desktop apps in Rust and GPUI. Files stay in your folders; no account, no cloud service.
 

@@ -26,17 +26,16 @@ fn output(cx: &mut TestAppContext, deck: &Entity<Deck>, kind: Kind, range: Range
     })
 }
 
-/// Pages of a PDF, by pdftotext's page breaks.
-fn pages(pdf: &Path) -> Option<usize> {
-    let out = std::process::Command::new("pdftotext").arg(pdf).arg("-").output().ok()?;
-    let text = String::from_utf8_lossy(&out.stdout).into_owned();
-    Some(text.split('\x0c').count() - 1)
+/// Counts pages through an independent PDF parser.
+fn pages(pdf: &Path) -> usize {
+    lopdf::Document::load(pdf).expect("a valid exported PDF").get_pages().len()
 }
 
 #[test]
 fn slides_and_handouts_go_out_and_the_deck_stays_put() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -50,10 +49,7 @@ fn slides_and_handouts_go_out_and_the_deck_stays_put() {
     update(&mut cx, &deck, |deck, cx| deck.export_pdf(&asked, handouts.clone(), cx));
     settle(&cx, |_| slides.exists() && handouts.exists());
     assert_eq!(undo_steps(&mut cx, &deck), steps, "the deck is not touched");
-    let (Some(slides), Some(handouts)) = (pages(&slides), pages(&handouts)) else {
-        eprintln!("SKIP: no pdftotext to count pages");
-        return;
-    };
+    let (slides, handouts) = (pages(&slides), pages(&handouts));
     assert_eq!(slides, 2, "the hidden slide stays out");
     assert_eq!(handouts, 1, "two slides on one handout page");
 }
@@ -62,6 +58,7 @@ fn slides_and_handouts_go_out_and_the_deck_stays_put() {
 fn pictures_are_one_png_a_shown_slide_and_never_overwrite() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -100,6 +97,7 @@ fn the_check_lists_font_link_and_object_with_their_slides() {
     use crate::dialog::Dialog;
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = super::deck(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -130,6 +128,7 @@ fn the_check_lists_font_link_and_object_with_their_slides() {
 fn pictures_claim_every_name_first_and_follow_no_link() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -154,6 +153,7 @@ fn master_view_exports_slides_and_has_no_current() {
     use crate::dialog::Dialog;
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -179,6 +179,7 @@ fn a_late_check_never_covers_a_newer_dialog() {
     use crate::dialog::Dialog;
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -200,6 +201,7 @@ fn a_late_check_stays_away_after_another_dialog_closes() {
     use crate::dialog::Dialog;
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -225,6 +227,7 @@ fn a_late_check_stays_away_after_another_dialog_closes() {
 fn pictures_follow_the_slides_as_written_not_as_asked() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

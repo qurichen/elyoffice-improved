@@ -93,12 +93,36 @@ fn restore(kept: &Kept, folder: &Path, work: &Path, next: u64, this_run: bool) -
         }
         false => Recovery::new(folder.to_path_buf()),
     };
-    let Some(point) = recovery.points()?.into_iter().next() else {
+    let Some(point) = recovery.newest()? else {
         return Ok(None);
     };
     let dir = crate::files::work_dir(work, next)?;
     let copy = dir.join(&kept.name).with_extension(&kept.format);
     recovery.restore(&point, &copy)?;
     Ok(Some((copy, point.at)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restoring_the_latest_point_does_not_read_corrupt_older_metadata() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let folder = dir.path().join("slot");
+        let work = dir.path().join("work");
+        std::fs::create_dir(&work).expect("the scratch root");
+        let mut points = Recovery::new(folder.clone());
+        let old = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(100);
+        let new = old + std::time::Duration::from_secs(1);
+        let path = points.write_once(b"older", Some("1:1"), old).expect("older point").expect("a write");
+        points.write_once(b"latest", None, new).expect("latest point");
+        std::fs::write(path.with_extension("cursor"), [0xff]).expect("corrupt older metadata");
+        let kept = Kept { slot: "123-0".into(), name: "restored.docx".into(), format: "docx".into(), sealed: false, held: false };
+        let (copy, at) = restore(&kept, &folder, &work, 1, false).expect("the newest point remains valid").expect("a point");
+        assert_eq!(std::fs::read(copy).expect("restored bytes"), b"latest");
+        assert_eq!(at, new);
+        assert_eq!(std::fs::read(path.with_extension("cursor")).expect("old metadata stays"), [0xff]);
+    }
 }
 

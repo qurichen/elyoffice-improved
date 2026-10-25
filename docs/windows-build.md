@@ -5,6 +5,11 @@ existing installed app unchanged until the publication gates pass.
 The actual engine revision is pinned in `scripts/fetch-references.sh`;
 Rust and Cargo dependencies use `rust-toolchain.toml` and `Cargo.lock`.
 
+The latest local engine build applies 64 patches. Patch 0064 fixes duplicated
+screen-DPI scaling in Windows LOK non-printer graphics; it does not change the
+Windows display settings. See [round 14 validation](windows-validation-round14.md)
+for the rebuilt DLL identity, image checks and rerun application suites.
+
 ## Tools and paths
 
 Use a short, local, task-owned build directory on a drive with sufficient

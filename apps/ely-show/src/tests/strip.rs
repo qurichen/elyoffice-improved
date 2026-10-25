@@ -18,6 +18,7 @@ impl gpui::Render for Host {
 fn the_wheel_scrolls_the_strip_to_its_last_slide() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         return eprintln!("SKIP: no LOK build");
     };

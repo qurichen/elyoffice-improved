@@ -8,6 +8,7 @@ use crate::merge::read_csv;
 fn typing_during_a_closing_save_is_never_lost() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -36,6 +37,7 @@ fn typing_during_a_closing_save_is_never_lost() {
 fn two_tabs_saving_as_one_path_keep_one_owner() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -80,6 +82,7 @@ fn two_tabs_saving_as_one_path_keep_one_owner() {
 fn interleaved_previews_keep_their_sources() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -130,6 +133,7 @@ fn interleaved_previews_keep_their_sources() {
 fn closing_a_clean_tab_never_waits_for_the_worker() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

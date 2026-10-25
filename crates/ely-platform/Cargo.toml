@@ -38,6 +38,7 @@ objc2.workspace = true
 security-framework.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+clipboard-win = "5.4"
 windows-sys.workspace = true
 windows.workspace = true
 

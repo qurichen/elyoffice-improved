@@ -13,6 +13,7 @@ fn tabs(app: &gpui::App, docs: &Entity<Docs>) -> usize {
 fn records_fill_previews_and_files() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -109,6 +110,7 @@ fn records_fill_previews_and_files() {
 fn compare_opens_a_marked_copy_and_keeps_both_files() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -158,6 +160,7 @@ fn compare_opens_a_marked_copy_and_keeps_both_files() {
 fn a_merge_keeps_its_source_when_the_tab_changes() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -227,6 +230,7 @@ fn a_merge_keeps_its_source_when_the_tab_changes() {
 fn two_generations_keep_their_own_templates() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -278,6 +282,7 @@ fn two_generations_keep_their_own_templates() {
 fn the_template_chosen_with_the_data_stays_through_a_preview() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

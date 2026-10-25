@@ -16,6 +16,8 @@ use crate::{Engine, Host, Tabs as _, text};
 
 mod point;
 mod reopen;
+mod index;
+use index::read as read_index;
 
 /// A tab's points, and the edit the last holds.
 struct Slot {
@@ -134,14 +136,6 @@ impl Keeping {
 fn write_index(path: &Path, bytes: &[u8]) -> io::Result<()> {
     std::fs::create_dir_all(path.parent().expect("the index has a folder"))?;
     ely_files::save_atomic(path, bytes, 0).map(|_| ())
-}
-
-fn read_index(dir: &Path) -> io::Result<Vec<Kept>> {
-    match std::fs::read(dir.join("recovery").join("index.json")) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(error) => Err(error),
-    }
 }
 
 /// Removes every slot folder but those `held`.

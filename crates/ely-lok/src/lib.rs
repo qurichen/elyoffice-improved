@@ -16,7 +16,7 @@ mod worker;
 
 pub use client::{
     A11y, Cell, Doc, Events, Function, MIXED, Mark, Mouse, Pdf, Rect, Request, Sheet, Sheets, Tile,
-    Worker, install_dir, is_stale, templates,
+    Worker, install_dir, is_nothing, is_stale, templates,
 };
 #[cfg(feature = "view")]
 pub use view::{

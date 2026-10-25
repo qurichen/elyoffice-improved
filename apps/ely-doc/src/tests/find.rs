@@ -29,6 +29,7 @@ fn total(app: &gpui::App, docs: &Entity<Docs>) -> Option<usize> {
 fn find_counts_steps_replaces_and_counts_words() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -88,6 +89,7 @@ fn find_counts_steps_replaces_and_counts_words() {
 fn a_misspelled_word_offers_suggestions() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -151,6 +153,7 @@ fn a_misspelled_word_offers_suggestions() {
 fn edits_mark_the_count_and_steps_scroll_to_far_matches() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -199,6 +202,7 @@ fn edits_mark_the_count_and_steps_scroll_to_far_matches() {
 fn a_step_asked_during_a_count_waits_for_it() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

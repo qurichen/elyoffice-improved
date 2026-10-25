@@ -21,6 +21,7 @@ fn state(cx: &TestAppContext, props: &Entity<Props>, uno: &str) -> Option<String
 fn the_page_turns_resizes_and_keeps_quick_margins() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -82,6 +83,7 @@ fn the_page_turns_resizes_and_keeps_quick_margins() {
 fn insert_actions_and_object_size_land() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -160,6 +162,7 @@ fn insert_actions_and_object_size_land() {
 fn sections_footers_and_tall_images_hold_up() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -253,6 +256,7 @@ fn sections_footers_and_tall_images_hold_up() {
 fn queued_page_edits_footers_and_new_sections_show_up() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

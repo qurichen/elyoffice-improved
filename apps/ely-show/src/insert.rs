@@ -161,6 +161,7 @@ mod tests {
     #[test]
     fn insert_media_shows_only_where_it_plays() {
         let cx = gpui::TestAppContext::single();
+        let _quit = ely_ui::testing::quit_on_drop(&cx);
         cx.update(ely_gpui_component::init_for_tests);
         let (offered, total) = cx.update(|cx| {
             ely_ui::settings::install_defaults(cx);

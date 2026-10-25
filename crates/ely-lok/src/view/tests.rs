@@ -3,9 +3,14 @@ use super::*;
 mod borders;
 mod clip;
 mod commands;
+mod edge;
 mod fit;
+mod formula;
+mod guards;
 mod input;
 mod large;
+mod lifetime;
+use ely_ui::testing::reap_on_quit;
 mod show_borders;
 mod theme;
 use gpui::{App, Bounds, Entity, point, size};
@@ -56,6 +61,7 @@ pub(super) fn live_view_of(
         .expect("the document loads");
     std::mem::forget(dir);
     let shared = Arc::new(Mutex::new(worker));
+    reap_on_quit(&shared, app, crate::Worker::shutdown);
     let laid = super::layout(&mut shared.lock().expect("the worker lock"), &doc)
         .expect("the layout reads");
     let view = LokView::open(Arc::clone(&shared), doc, laid, app);

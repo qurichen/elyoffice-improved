@@ -1,0 +1,25 @@
+diff --git a/vcl/win/gdi/salgdi.cxx b/vcl/win/gdi/salgdi.cxx
+--- a/vcl/win/gdi/salgdi.cxx
++++ b/vcl/win/gdi/salgdi.cxx
+@@ -31,6 +31,7 @@
+ #include <basegfx/polygon/b2dpolygontools.hxx>
+ #include <basegfx/polygon/b2dpolypolygontools.hxx>
+ #include <comphelper/windowserrorstring.hxx>
++#include <comphelper/lok.hxx>
+ #include <win/wincomp.hxx>
+ #include <win/saldata.hxx>
+ #include <win/salgdi.h>
+@@ -331,6 +332,13 @@
+ 
+ void WinSalGraphics::GetResolution( sal_Int32& rDPIX, sal_Int32& rDPIY )
+ {
++    // Tile geometry already includes the client's zoom and display scale.
++    if (comphelper::LibreOfficeKit::isActive() && !isPrinter())
++    {
++        rDPIX = rDPIY = 96;
++        return;
++    }
++
+     rDPIX = GetDeviceCaps( getHDC(), LOGPIXELSX );
+     rDPIY = GetDeviceCaps( getHDC(), LOGPIXELSY );
+ 

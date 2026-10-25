@@ -161,6 +161,47 @@ fn spelling_suggests_and_ignores() {
 }
 
 #[test]
+fn spelling_supports_bundled_english_variants() {
+    if install().is_none() {
+        eprintln!("SKIP: no pinned LOK build");
+        return;
+    }
+    let namespaces = r#"xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0""#;
+    for country in ["US", "GB", "AU", "CA"] {
+        let style = format!(
+            r#"<office:styles><style:default-style style:family="paragraph"><style:text-properties fo:language="en" fo:country="{country}"/></style:default-style></office:styles>"#
+        );
+        let source = TEXT
+            .replacen(
+                "office:version=",
+                &format!("{namespaces} office:version="),
+                1,
+            )
+            .replacen("<office:body>", &format!("{style}<office:body>"), 1);
+        let (_dir, mut worker, doc) = open(&source);
+        let mut seen = Events::default();
+        search(
+            &mut worker,
+            &doc,
+            &mut seen,
+            "find.run",
+            &["Teh", "false", "0", "0", "0", "1"],
+        );
+        let (x, y, _, h) = seen.found[0];
+        let json =
+            menu(&mut worker, &doc, &mut seen, (x + 60, y + h / 2)).expect("the context menu");
+        let spelling = menu::read(&json)
+            .expect("a valid menu")
+            .spelling
+            .unwrap_or_else(|| panic!("en-{country} spelling is available"));
+        assert!(
+            spelling.suggestions.iter().any(|(label, _)| label == "The"),
+            "en-{country} offers the bundled correction"
+        );
+    }
+}
+
+#[test]
 fn compare_marks_changes_against_an_older_file() {
     if install().is_none() {
         eprintln!("SKIP: no pinned LOK build");

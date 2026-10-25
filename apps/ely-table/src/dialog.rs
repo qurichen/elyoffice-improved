@@ -54,6 +54,7 @@ pub enum Dialog {
     },
     Merge {
         tab: u64,
+        at: ely_lok::Doc,
     },
     Define {
         tab: u64,
@@ -221,8 +222,8 @@ impl Book {
             Dialog::Size { column, field, .. } => {
                 crate::cells::size_dialog(this, (*column, field), dismiss, cx).into_any_element()
             }
-            Dialog::Merge { tab } => {
-                crate::cells::merge_dialog(this, *tab, dismiss, cx).into_any_element()
+            Dialog::Merge { tab, at } => {
+                crate::cells::merge_dialog(this, (*tab, at), dismiss, cx).into_any_element()
             }
             Dialog::Define {
                 name, range, scope, ..

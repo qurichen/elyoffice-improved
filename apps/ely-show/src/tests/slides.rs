@@ -38,6 +38,7 @@ fn has(cx: &TestAppContext, deck: &Entity<Deck>, done: impl Fn(&Objects) -> bool
 fn the_chart_dialog_inserts_edits_and_refuses_words() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -93,6 +94,7 @@ fn the_chart_dialog_inserts_edits_and_refuses_words() {
 fn the_table_dialog_inserts_a_table() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -108,6 +110,7 @@ fn the_table_dialog_inserts_a_table() {
 fn an_open_dialog_is_not_pushed_aside() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -125,6 +128,7 @@ fn an_open_dialog_is_not_pushed_aside() {
 fn a_comment_lands_on_the_shown_slide() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -154,6 +158,7 @@ fn a_comment_lands_on_the_shown_slide() {
 fn notes_typed_before_a_slide_change_stay_on_their_slide() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -199,6 +204,7 @@ fn notes_typed_before_a_slide_change_stay_on_their_slide() {
 fn a_chart_read_that_lands_late_opens_nothing() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -236,6 +242,7 @@ fn a_chart_read_that_lands_late_opens_nothing() {
 fn a_chart_read_never_shows_another_chart_on_the_same_frame() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -300,6 +307,7 @@ fn a_chart_read_never_shows_another_chart_on_the_same_frame() {
 fn a_scatter_with_words_for_x_keeps_its_draft_and_names_the_cell() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -339,6 +347,7 @@ fn a_scatter_with_words_for_x_keeps_its_draft_and_names_the_cell() {
 fn a_comment_picked_on_another_slide_shows_its_slide_again() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -382,6 +391,7 @@ fn a_zoom_stays_through_later_reports() {
     use ely_gpui_component::shell::ZoomStep;
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -405,6 +415,7 @@ fn a_zoom_stays_through_later_reports() {
 fn a_check_row_does_not_jump_among_masters() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -422,6 +433,7 @@ fn a_check_row_does_not_jump_among_masters() {
 fn a_refused_size_does_not_stay_shown() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -443,6 +455,7 @@ fn a_refused_size_does_not_stay_shown() {
 fn a_size_the_kernel_does_not_take_clears_after_its_read() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

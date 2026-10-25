@@ -33,6 +33,7 @@ fn wheel(shown: &mut VisualTestContext, notches: f32) {
 fn the_wheel_and_up_down_turn_slides() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         return eprintln!("SKIP: no LOK build");
     };

@@ -10,24 +10,8 @@ use ely_gpui_component::primitives::Severity;
 use gpui::{Context, TaskExt as _, Window};
 
 use crate::files::{self, file_name};
+use crate::paths::identity;
 use crate::{After, Closing, Dialog, Engine, Host, Opening, Tab, Tabs, in_window, text};
-
-/// The file a path names, links resolved.
-fn identity(path: &Path) -> io::Result<PathBuf> {
-    let real = match std::fs::canonicalize(path) {
-        Ok(real) => real,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            let parent = path.parent().unwrap_or(Path::new("."));
-            let name = path
-                .file_name()
-                .ok_or_else(|| io::Error::other("no file name"))?;
-            std::fs::canonicalize(parent)?.join(name)
-        }
-        Err(error) => return Err(error),
-    };
-    // Whole path only: a name may need `\\?\`.
-    Ok(dunce::simplified(&real).to_path_buf())
-}
 
 pub trait Saving: Host {
     /// The tab whose source file is `target`.
@@ -187,8 +171,15 @@ pub trait Saving: Host {
             .rsplit_once('.')
             .map_or(tab.name.as_ref(), |(stem, _)| stem);
         log::info!("office: asks where to save tab {id}");
+        #[cfg(not(windows))]
         let chosen =
             cx.prompt_for_new_path(&dir, Some(&format!("{stem}.{}", Self::KIND.save_as[0])));
+        #[cfg(windows)]
+        let chosen = cx.prompt_for_new_file(
+            &dir,
+            Some(&format!("{stem}.{}", Self::KIND.save_as[0])),
+            Self::KIND.save_as[0],
+        );
         cx.spawn(async move |this, cx| {
             let chosen = match chosen.await {
                 Ok(Ok(path)) => Ok(path),
@@ -237,6 +228,11 @@ pub trait Saving: Host {
             Ok(target) => target,
             Err(error) => return self.refuse_save(&then, unsaved(error, cx), cx),
         };
+        match crate::paths::inside(&self.core().work, &target) {
+            Ok(true) => return self.refuse_save(&then, text(cx, "office.error.work", &[]), cx),
+            Ok(false) => {}
+            Err(error) => return self.refuse_save(&then, unsaved(error, cx), cx),
+        }
         let Some(format) = files::save_as_format(&Self::KIND, &target) else {
             let formats = Self::KIND.save_as.join(", .");
             let text = text(cx, "office.error.format", &[("formats", &formats)]);

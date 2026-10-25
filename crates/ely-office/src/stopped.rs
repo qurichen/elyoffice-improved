@@ -87,26 +87,28 @@ pub trait Stopping: Host {
     /// Unsaved tabs from their newest point, clean ones from file.
     fn reopen_all(&mut self, cx: &mut Context<Self>) {
         self.core_mut().stopped = None;
-        let tabs: Vec<(u64, String, Option<PathBuf>, bool)> = self
+        let tabs: Vec<(u64, String, Option<PathBuf>, bool, PathBuf)> = self
             .core()
             .tabs
             .iter()
-            .map(|tab| (tab.id, tab.name.to_string(), tab.session.path().map(PathBuf::from), tab.dirty(cx)))
+            .map(|tab| (tab.id, tab.name.to_string(), tab.session.path().map(PathBuf::from), tab.dirty(cx), tab.work.clone()))
             .collect();
         let (mut taken, mut lost) = (Vec::new(), Vec::new());
-        for (id, name, path, dirty) in tabs {
+        for (id, name, path, dirty, work) in tabs {
             if !dirty {
                 self.release_tab(id, cx);
                 if let Some(path) = path {
                     self.open_file(path, cx);
                 }
-                continue;
+            } else {
+                match self.take_slot(id, name.clone()) {
+                    Some(slot) => taken.push(slot),
+                    None => lost.push(name),
+                }
+                self.release_tab(id, cx);
             }
-            match self.take_slot(id, name.clone()) {
-                Some(slot) => taken.push(slot),
-                None => lost.push(name),
-            }
-            self.release_tab(id, cx);
+            let root = self.core().work.clone();
+            cx.background_spawn(async move { crate::close::remove_work(root, work) }).detach();
         }
         // Questions about the released tabs have no answer now.
         if matches!(self.core().dialog, Some(Dialog::Unsaved { .. } | Dialog::Conflict { .. })) {

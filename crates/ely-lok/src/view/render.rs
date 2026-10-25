@@ -46,7 +46,9 @@ impl Render for LokView {
         let focus = self.focus.clone();
         let colors = &cx.theme().colors;
         let paper = super::paper();
-        let (selection_color, caret_color) = (colors.selection, colors.focus);
+        // Opaque overlays hide glyphs already painted in the tiles.
+        let selection_color = colors.selection.alpha(colors.selection.a.min(0.3));
+        let caret_color = colors.focus;
         let canvas_color = colors.sunken;
         let caret_width = cx.theme().caret_width().to_pixels(window.rem_size());
         self.handle_size = cx.theme().handle_hit().to_pixels(window.rem_size());
@@ -59,6 +61,7 @@ impl Render for LokView {
             .track_focus(&self.focus)
             .cursor(self.border_pointer().unwrap_or(self.pointer))
             .size_full()
+            .relative()
             .overflow_hidden()
             .bg(canvas_color)
             .on_action(cx.listener(Self::on_copy))
@@ -174,6 +177,18 @@ impl Render for LokView {
                                 window.paint_quad(fill(caret, caret_color));
                             }
                         });
+                        {
+                            // Always on: press and moves may share one frame.
+                            let this = this.clone();
+                            window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, app| {
+                                let left = event.pressed_button == Some(MouseButton::Left);
+                                if phase == DispatchPhase::Bubble && left && this.read(app).dragging {
+                                    this.update(app, |view, cx| {
+                                        view.drag_to(event.position, event.modifiers, cx)
+                                    });
+                                }
+                            });
+                        }
                         if painted.guide.is_some() {
                             // A held border follows the pointer out of the view.
                             let this = this.clone();

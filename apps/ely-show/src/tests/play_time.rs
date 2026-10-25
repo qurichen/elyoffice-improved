@@ -52,6 +52,7 @@ fn fading_first(cx: &mut TestAppContext, deck: &Entity<Deck>) {
 fn back_shows_a_slide_fully_built_even_without_clicks() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -75,6 +76,7 @@ fn back_shows_a_slide_fully_built_even_without_clicks() {
 fn a_slide_starts_its_clock_when_its_layers_come() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -106,6 +108,7 @@ fn a_slide_starts_its_clock_when_its_layers_come() {
 fn a_finished_transition_lets_the_left_slide_go() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = blank(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

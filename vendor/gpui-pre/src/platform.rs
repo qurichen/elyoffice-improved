@@ -409,6 +409,15 @@ pub trait Platform: 'static {
         directory: &Path,
         suggested_name: Option<&str>,
     ) -> oneshot::Receiver<Result<Option<PathBuf>>>;
+    #[cfg(windows)]
+    fn prompt_for_new_file(
+        &self,
+        directory: &Path,
+        suggested_name: Option<&str>,
+        _extension: &str,
+    ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
+        self.prompt_for_new_path(directory, suggested_name)
+    }
     fn can_select_mixed_files_and_dirs(&self) -> bool;
     fn reveal_path(&self, path: &Path);
     fn open_with_system(&self, path: &Path);

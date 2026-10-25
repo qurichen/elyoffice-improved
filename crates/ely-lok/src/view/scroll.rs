@@ -105,16 +105,21 @@ impl LokView {
         self.scroll
     }
 
-    /// The document extent the view may scroll over.
-    pub(super) fn extent(&self) -> (i32, i32) {
+    /// What the document holds, before a sheet's room ahead.
+    fn content(&self) -> (i32, i32) {
         // A fitted page is the page, whatever the cursor reached.
         if self.fit {
             return self.doc_size;
         }
         // The kernel sizes a sheet in tile twips already.
         let reach = self.tile_of(self.reach);
-        let (w, h) = (self.doc_size.0.max(reach.0), self.doc_size.1.max(reach.1));
-        let Some(sheet) = &self.sheet else {
+        (self.doc_size.0.max(reach.0), self.doc_size.1.max(reach.1))
+    }
+
+    /// The document extent the view may scroll over.
+    pub(super) fn extent(&self) -> (i32, i32) {
+        let (w, h) = self.content();
+        let Some(sheet) = self.sheet.as_ref().filter(|_| !self.fit) else {
             return (w, h);
         };
         // Sheets scroll ahead of the kernel, to their end.

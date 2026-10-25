@@ -90,12 +90,15 @@ pub mod tag {
     pub const SLIDE_LAYER: u8 = 35;
     /// Turns parts; an arrow with something picked goes in.
     pub const TURN: u8 = 36;
+    pub const EXPECT_AT: u8 = 37;
     pub const OK: u8 = 100;
     pub const ERR: u8 = 101;
 }
 
 /// How a refusal for a changed document begins.
 pub const STALE: &str = "stale: ";
+/// How a refusal for an empty undo or redo begins.
+pub const NOTHING: &str = "nothing: ";
 
 #[cfg(test)]
 mod tests {

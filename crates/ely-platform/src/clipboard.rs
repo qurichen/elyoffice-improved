@@ -54,7 +54,7 @@ pub fn write(clip: &Clip) -> Result<()> {
 pub fn read() -> Result<Option<Clip>> {
     with_board(|board| {
         let text = absent_ok(board.get_text())?;
-        if let Some(html) = absent_ok(board.get().html())? {
+        if let Some(html) = html_of(board)? {
             let text = text.unwrap_or_default();
             return Ok(Some(Clip::Html { html, text }));
         }
@@ -76,7 +76,20 @@ pub fn read() -> Result<Option<Clip>> {
 
 /// The clipboard's HTML, if any; gpui's reads omit it.
 pub fn html() -> Result<Option<String>> {
-    with_board(|board| absent_ok(board.get().html()))
+    with_board(html_of)
+}
+
+fn html_of(board: &mut Clipboard) -> Result<Option<String>> {
+    // arboard reads absent HTML on Windows as an error.
+    #[cfg(windows)]
+    {
+        let format = clipboard_win::register_format("HTML Format")
+            .context("the HTML clipboard format registers")?;
+        if !clipboard_win::is_format_avail(format.get()) {
+            return Ok(None);
+        }
+    }
+    absent_ok(board.get().html())
 }
 
 /// Empty or other-format clipboards read as None.
@@ -110,6 +123,7 @@ mod tests {
         let text = Clip::Text("plain 中文".into());
         write(&text).expect("text writes");
         assert_eq!(read().expect("text reads"), Some(text));
+        assert_eq!(html().expect("no html reads"), None);
         let html = Clip::Html {
             html: "<table><tr><td>a</td></tr></table>".into(),
             text: "a".into(),

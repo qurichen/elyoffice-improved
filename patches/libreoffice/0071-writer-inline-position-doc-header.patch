@@ -1,0 +1,15 @@
+Writer: include the document used by inline-position conversion
+
+Backport the missing-header correction from upstream 72bec20 without
+rewriting the already-built 0049 patch or the existing patch prefix.
+
+--- a/sw/source/core/objectpositioning/ascharanchoredobjectposition.cxx
++++ b/sw/source/core/objectpositioning/ascharanchoredobjectposition.cxx
+@@ -29,6 +29,7 @@
+ #include <fmtornt.hxx>
+ #include <fmtanchr.hxx>
+ #include <ndtxt.hxx>
++#include <doc.hxx>
+ #include <hintids.hxx>
+ #include <editeng/escapementitem.hxx>
+ #include <editeng/fhgtitem.hxx>

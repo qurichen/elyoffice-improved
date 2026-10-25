@@ -11,6 +11,7 @@ mod find;
 pub mod lok;
 pub mod menu;
 mod open;
+mod paths;
 mod recover;
 pub mod panel;
 mod save;

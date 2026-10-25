@@ -6,6 +6,7 @@ use super::*;
 fn a_rename_asked_before_a_delete_renames_nothing() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -18,8 +19,10 @@ fn a_rename_asked_before_a_delete_renames_nothing() {
     settle(&cx, |app| sheet_names(app, &book).len() == 3);
     fresh(&cx, &book);
     update(&mut cx, &book, |book, cx| book.show_sheet(1, cx));
+    fresh(&cx, &book);
     cx.update_window(window.into(), |_, window, app| book.update(app, |book, cx| book.ask_rename(window, cx)))
         .expect("the window lives");
+    settle(&cx, |app| matches!(book.read(app).dialog, Some(Dialog::Rename { .. })));
     // The first sheet goes while the dialog is open.
     update(&mut cx, &book, |book, cx| book.run_active("sheet.delete", &["1"], cx));
     settle(&cx, |app| sheet_names(app, &book) == ["B", "C"]);
@@ -33,6 +36,7 @@ fn a_rename_asked_before_a_delete_renames_nothing() {
 fn a_failed_command_still_moves_the_state_on() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -50,6 +54,7 @@ fn a_failed_print_says_printing_failed() {
     use ely_gpui_component::primitives::Severity;
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

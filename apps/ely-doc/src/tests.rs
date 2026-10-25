@@ -33,6 +33,7 @@ pub(crate) fn docs(cx: &mut TestAppContext, dir: &Path) -> Option<Entity<Docs>> 
         ely_ui::settings::install_defaults(app);
         ely_ui::i18n::install(app);
         let worker = Arc::new(Mutex::new(worker));
+        ely_ui::testing::reap_on_quit(&worker, app, ely_lok::Worker::shutdown);
         Some(app.new(|cx| Docs::new(worker, work, cx)))
     })
 }
@@ -96,6 +97,7 @@ pub(crate) fn type_into(cx: &mut TestAppContext, docs: &Entity<Docs>, text: &str
 fn a_new_document_saves_as_docx_and_comes_back_clean() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -133,6 +135,7 @@ fn a_new_document_saves_as_docx_and_comes_back_clean() {
 fn a_save_keeps_the_format_and_save_as_converts_to_a_new_file() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -181,6 +184,7 @@ fn a_save_keeps_the_format_and_save_as_converts_to_a_new_file() {
 fn a_local_template_opens_untitled_and_stays_untouched() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -215,6 +219,7 @@ fn a_local_template_opens_untitled_and_stays_untouched() {
 fn an_open_file_gets_focus_and_unsaved_closes_ask() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -298,6 +303,7 @@ pub(crate) fn commit(cx: &mut TestAppContext, docs: &Entity<Docs>, text: &str) {
 fn queued_input_reaches_the_save_and_the_close_prompt() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -327,6 +333,7 @@ fn queued_input_reaches_the_save_and_the_close_prompt() {
 fn a_macro_file_opens_in_risk_mode_and_saves_only_as_a_copy() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -376,6 +383,7 @@ fn a_macro_file_opens_in_risk_mode_and_saves_only_as_a_copy() {
 fn an_alias_never_converts_the_open_file() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -427,6 +435,7 @@ fn an_alias_never_converts_the_open_file() {
 fn an_outside_change_asks_and_keep_mine_overwrites() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -463,6 +472,8 @@ fn an_outside_change_asks_and_keep_mine_overwrites() {
 mod find;
 mod more;
 mod overlap;
+mod lifecycle;
+mod trial;
 
 impl Docs {
     /// Chooses the active tab as template, then types a field.

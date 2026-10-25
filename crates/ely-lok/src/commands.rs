@@ -50,6 +50,13 @@ pub enum Check {
     Finished,
 }
 
+/// Which context must remain valid for a command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Target {
+    Selection,
+    Document,
+}
+
 /// One UI operation: kernel command, arguments, confirmation.
 #[derive(Debug, PartialEq)]
 pub struct Command {
@@ -57,6 +64,7 @@ pub struct Command {
     pub uno: &'static str,
     pub args: &'static [Arg],
     pub check: Check,
+    pub target: Target,
 }
 
 /// Arguments that count things as a read saw them.
@@ -90,6 +98,7 @@ pub(crate) const fn command(
         uno,
         args,
         check,
+        target: Target::Selection,
     }
 }
 
@@ -163,6 +172,22 @@ pub fn fonts(json: &str) -> io::Result<Vec<String>> {
         .as_object()
         .ok_or_else(|| invalid("the font list has no families".into()))?;
     Ok(fonts.keys().cloned().collect())
+}
+
+/// Writer's Western and Asian fonts; empty when mixed (0055).
+pub fn char_fonts(json: &str) -> io::Result<Option<[String; 2]>> {
+    let fonts = parse(json)?;
+    // Past Writer's lookup limit: none read.
+    if fonts["unread"] == true {
+        return Ok(None);
+    }
+    let read = |key: &str| {
+        fonts[key]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| invalid(format!("the fonts lack {key}: {json}")))
+    };
+    Ok(Some([read("western")?, read("asian")?]))
 }
 
 /// One style family: 1 character, 2 paragraph, 8 page.
@@ -382,6 +407,11 @@ mod tests {
         assert!(super::styles(styles, "3").is_err(), "no third family");
         assert!(super::styles("{}", "2").is_err(), "a missing family fails");
         assert!(super::fonts("not json").is_err());
+        let both = r#"{"western":"Liberation Mono","asian":""}"#;
+        let fonts = super::char_fonts(both).expect("fonts");
+        assert_eq!(fonts, Some(["Liberation Mono".into(), String::new()]));
+        assert_eq!(super::char_fonts(r#"{"unread":true}"#).expect("unread"), None);
+        assert!(super::char_fonts(r#"{"western":"Arial"}"#).is_err(), "no Asian font");
     }
 
     fn styles_of(json: &str, family: &str) -> Vec<String> {

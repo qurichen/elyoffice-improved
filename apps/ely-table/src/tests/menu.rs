@@ -51,7 +51,11 @@ fn spot(cx: &mut VisualTestContext, book: &Entity<Book>, column: u32, row: u32, 
 
 /// Right-clicks and waits until `shown` holds for the menu.
 fn right_click(cx: &mut VisualTestContext, book: &Entity<Book>, at: Point<Pixels>, shown: Shows) {
-    cx.update(|_, app| book.update(app, |book, _| book.menu = None));
+    cx.update(|_, app| book.update(app, |book, cx| {
+        book.menu = None;
+        cx.notify();
+    }));
+    frames(cx);
     cx.simulate_mouse_move(at, None, Modifiers::none());
     cx.simulate_mouse_down(at, MouseButton::Right, Modifiers::none());
     cx.simulate_mouse_up(at, MouseButton::Right, Modifiers::none());
@@ -62,7 +66,13 @@ fn right_click(cx: &mut VisualTestContext, book: &Entity<Book>, at: Point<Pixels
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    panic!("no menu");
+    let state = cx.update(|_, app| {
+        let book = book.read(app);
+        let kind = book.menu.as_ref().map(|offer| offer.what.kind);
+        let origin = book.active_tab().expect("a tab").view.read(app).origin();
+        (kind, origin)
+    });
+    panic!("no expected menu at {at:?}; kind and origin: {state:?}");
 }
 
 fn on(cx: &mut VisualTestContext, book: &Entity<Book>, pick: Pick) -> bool {
@@ -109,6 +119,7 @@ fn protect(cx: &mut TestAppContext, book: &Entity<Book>, more: &[&str]) {
 fn right_clicks_open_excel_rows_on_cells_and_headers() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = super::book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -219,6 +230,7 @@ fn type_in_shape(cx: &mut TestAppContext, book: &Entity<Book>) {
 fn a_header_ends_shape_text_editing() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = super::book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

@@ -359,6 +359,7 @@ mod tests {
         use crate::tests::{settle, update};
         let dir = tempfile::tempdir().expect("a temp dir");
         let mut cx = gpui::TestAppContext::single();
+        let _quit = ely_ui::testing::quit_on_drop(&cx);
         let Some(deck) = crate::tests::deck(&mut cx, dir.path()) else {
             eprintln!("SKIP: no LOK build");
             return;

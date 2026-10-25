@@ -7,6 +7,7 @@ use super::{counts, deck, quiet, settle, update};
 fn an_edited_deck_saves_pptx_and_reopens_clean() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(deck) = deck(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

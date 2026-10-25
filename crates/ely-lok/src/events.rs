@@ -11,7 +11,7 @@ use crate::ffi::Document;
 
 mod cell;
 mod parse;
-pub use cell::{Cell, Function, Mark, Request};
+pub use cell::{Cell, Function, Mark, Request, offered};
 use cell::{functions_of, marks_of, request_of, usage_of};
 pub use parse::A11y;
 use parse::{

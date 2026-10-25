@@ -57,6 +57,7 @@ fn right_click(cx: &mut VisualTestContext, docs: &Entity<Docs>, at: Point<Pixels
 fn a_right_click_opens_word_rows_where_it_lands() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

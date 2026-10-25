@@ -39,6 +39,7 @@ fn moved(view: &mut LokView, place: Place, from: i32) -> Table {
 fn drag(size: (&str, &str), place: Place, upright: bool, bys: &[Point<Pixels>]) -> Option<[i32; 4]> {
     let install = crate::client::tests::install()?;
     let cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let (view, _) = cx.update(|app| live_view_of(app, &install, "deck.fodp", DECK));
     let mut table = cx.update(|app| view.update(app, |view, _| table_in(view, size)));
     let mut last = [0; 3];
@@ -135,6 +136,7 @@ fn a_still_press_beside_a_minimum_column_sends_nothing() {
         return eprintln!("SKIP: no pinned LOK build");
     };
     let cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let (view, _) = cx.update(|app| live_view_of(app, &install, "deck.fodp", DECK));
     let right: Place = |t| t.columns.offset + t.columns.right;
     let quarter = |t: &Table| t.rows.offset + t.rows.left + (t.rows.right - t.rows.left) / 4;
@@ -157,7 +159,7 @@ fn a_still_press_beside_a_minimum_column_sends_nothing() {
     let sent = cx.update(|app| {
         view.update(app, |view, cx| {
             let line = table.columns.inner[0];
-            assert_eq!(line.position, line.max, "the right column is at its minimum");
+            assert_eq!(i64::from(line.position), line.max, "the right column is at its minimum");
             let on = view.window_point((table.columns.offset + line.position, quarter(&table)));
             let sent = view.sent();
             assert!(view.hold_border(on));

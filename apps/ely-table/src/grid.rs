@@ -65,6 +65,11 @@ impl Book {
             .bg(sunken)
             .on_mouse_move(cx.listener(Self::on_drag_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_drag_end))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(|book, _, _, cx| {
+                if book.drag.take().is_some() {
+                    cx.notify();
+                }
+            }))
             .child(div().flex().child(corner).child(column_strip))
             .child(
                 div().flex_1().min_h_0().flex().child(row_strip).child(

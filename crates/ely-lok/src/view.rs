@@ -17,6 +17,8 @@ use crate::{Doc, Events, Rect, Worker};
 mod borders;
 mod clip;
 mod clock;
+mod commands;
+mod edge;
 mod formula;
 mod handles;
 mod ime;
@@ -123,6 +125,7 @@ pub struct LokView {
     pointer: gpui::CursorStyle,
     selection: Vec<Rect>,
     cell: crate::Cell,
+    completion: formula::Completion,
     /// Whether the kernel was told Ely's scheme.
     lit: bool,
     /// The zoom follows the viewport so a page fits.
@@ -134,6 +137,7 @@ pub struct LokView {
     picked: usize,
     marked: Option<ime::Marked>,
     dragging: bool,
+    edge: edge::Edge,
     grip: Option<handles::Grip>,
     borders: borders::Borders,
     handle_size: Pixels,
@@ -218,6 +222,7 @@ impl LokView {
             pointer: gpui::CursorStyle::Arrow,
             selection: Vec::new(),
             cell: crate::Cell::default(),
+            completion: formula::Completion::default(),
             lit: false,
             fit: false,
             turning: None,
@@ -225,6 +230,7 @@ impl LokView {
             picked: 0,
             marked: None,
             dragging: false,
+            edge: Default::default(),
             grip: None,
             borders: Default::default(),
             handle_size: px(6.0),
@@ -267,16 +273,6 @@ impl LokView {
         self.tiles.values().filter(|tile| !tile.stale).count()
     }
 
-    /// Runs a table command; arguments are checked now (LOK-02).
-    pub fn run(&mut self, id: &str, values: &[&str]) -> io::Result<()> {
-        let command = crate::commands::find(id)?;
-        if command.addressed(values) {
-            return Err(io::Error::other(format!("{id} names something by number; run it at the state it was read")));
-        }
-        self.send(input::Input::Run { commands: vec![command.owned(values)?], at: None });
-        Ok(())
-    }
-
     /// The document as the view last saw it.
     pub fn read_at(&self) -> Doc {
         self.doc.clone()
@@ -285,18 +281,6 @@ impl LokView {
     /// Batches and landings arrive out of order; keep the latest.
     fn seen_revision(&mut self, revision: u64) {
         self.doc.rev = self.doc.rev.max(revision);
-    }
-
-    /// Runs `id` against `at`, the document as it was read.
-    pub fn run_at(&mut self, at: &crate::Doc, id: &str, values: &[&str]) -> io::Result<()> {
-        self.run_all_at(at, &[(id, values)])
-    }
-
-    /// Runs `commands` in order, all made from the read `at`.
-    pub fn run_all_at(&mut self, at: &crate::Doc, commands: &[(&str, &[&str])]) -> io::Result<()> {
-        let commands = commands.iter().map(|(id, values)| crate::commands::find(id)?.owned(values)).collect::<io::Result<_>>()?;
-        self.send(input::Input::Run { commands, at: Some(at.clone()) });
-        Ok(())
     }
 
     /// Takes pushed events; the worker lock stays free (LOK-03).
@@ -392,6 +376,7 @@ impl LokView {
             self.picked = 0;
         }
         self.cell = batch.cell;
+        self.completion.reported(batch.revision);
         self.graphic = batch.graphic;
         self.read_borders(batch.table, batch.revision);
         self.review = batch.review;

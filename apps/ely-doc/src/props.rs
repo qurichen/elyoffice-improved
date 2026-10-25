@@ -176,7 +176,12 @@ impl Props {
         };
         log::info!("doc: panel runs {id}");
         // Numbers here, like tab stops, are as the view shows.
-        let sent = shown.view.update(cx, |view, _| view.run_at(&view.read_at(), id, values));
+        let sent = shown.view.update(cx, |view, _| {
+            match ely_lok::commands::find(id)?.addressed(values) {
+                true => view.run_at(&view.read_at(), id, values),
+                false => view.run(id, values),
+            }
+        });
         if let Err(error) = sent {
             cx.emit(LokError(format!("{id}: {error}")));
         }

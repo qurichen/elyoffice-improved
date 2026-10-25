@@ -6,6 +6,7 @@ use std::{
 
 #[cfg(test)]
 mod tests;
+mod restore;
 
 /// One recovery point and what it restores (§6.3).
 #[derive(Clone, Debug)]
@@ -166,6 +167,11 @@ impl Recovery {
         self.stamps()?.into_iter().map(|stamp| self.point(stamp)).collect()
     }
 
+    /// The newest point, without opening older metadata.
+    pub fn newest(&self) -> io::Result<Option<RecoveryPoint>> {
+        self.stamps()?.into_iter().next().map(|stamp| self.point(stamp)).transpose()
+    }
+
     /// The points' stamps by name alone, newest first.
     fn stamps(&self) -> io::Result<Vec<u128>> {
         let dir = self.dir.join("points");
@@ -289,17 +295,13 @@ impl Recovery {
                 "a sealed point needs its recovery key",
             ));
         }
-        let mut file = fresh_dest(dest)?;
         if point.sealed {
             let bundle = open_bundle(&self.key.expect("a sealed recovery holds its key"), point)?;
-            let (prefix, rest) = bundle.split_at(5);
-            let cursor_len = u32::from_le_bytes(prefix[1..].try_into().expect("a u32 prefix"));
-            file.write_all(&rest[cursor_len as usize..])?;
+            let (_, content) = bundle_parts(&bundle)?;
+            restore::publish(dest, |file| file.write_all(content))?;
         } else {
-            let mut source = std::fs::File::open(&point.content)?;
-            io::copy(&mut source, &mut file)?;
+            restore::copy(&point.content, dest)?;
         }
-        file.sync_all()?;
         log::info!("recovery: restored to {}", dest.display());
         Ok(())
     }
@@ -316,15 +318,6 @@ fn stamp_of(at: SystemTime) -> io::Result<u128> {
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "time before 1970"))?
         .as_nanos())
-}
-
-/// An exclusive fresh restore target; links never followed.
-fn fresh_dest(dest: &Path) -> io::Result<std::fs::File> {
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(dest)
-        .map_err(|error| io::Error::new(error.kind(), format!("{}: {error}", dest.display())))
 }
 
 /// AES-256-GCM with a fresh nonce (§18.2).
@@ -378,22 +371,21 @@ fn open_cursor(key: &[u8; 32], enc: &Path) -> io::Result<Option<String>> {
         sealed: true,
     };
     let bundle = open_bundle(key, &point)?;
-    let (flag, rest) = bundle
-        .split_at_checked(1)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "a short sealed bundle"))?;
-    if flag[0] == 0 {
-        return Ok(None);
-    }
-    let (prefix, rest) = rest
-        .split_at_checked(4)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "a short sealed bundle"))?;
-    let cursor_len = u32::from_le_bytes(prefix.try_into().expect("a u32 prefix")) as usize;
-    let cursor = rest
-        .get(..cursor_len)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "a short sealed bundle"))?;
-    Ok(Some(String::from_utf8(cursor.to_vec()).map_err(|_| {
-        io::Error::new(io::ErrorKind::InvalidData, "cursor is no text")
-    })?))
+    bundle_parts(&bundle).map(|(cursor, _)| cursor.map(str::to_owned))
+}
+
+/// Checks metadata before exposing restored bytes.
+fn bundle_parts(bundle: &[u8]) -> io::Result<(Option<&str>, &[u8])> {
+    let invalid = || io::Error::new(io::ErrorKind::InvalidData, "invalid sealed bundle metadata");
+    let (header, rest) = bundle.split_at_checked(5).ok_or_else(invalid)?;
+    let cursor_len = u32::from_le_bytes(header[1..].try_into().expect("four bytes")) as usize;
+    let (cursor, content) = rest.split_at_checked(cursor_len).ok_or_else(invalid)?;
+    let cursor = match header[0] {
+        0 if cursor_len == 0 => None,
+        1 => Some(std::str::from_utf8(cursor).map_err(|_| invalid())?),
+        _ => return Err(invalid()),
+    };
+    Ok((cursor, content))
 }
 
 /// The stamp an `.enc` file name carries.
@@ -413,10 +405,7 @@ pub fn restore_copy(point: &RecoveryPoint, dest: &Path) -> io::Result<()> {
             "a sealed point restores through its Recovery",
         ));
     }
-    let mut file = fresh_dest(dest)?;
-    let mut source = std::fs::File::open(&point.content)?;
-    io::copy(&mut source, &mut file)?;
-    file.sync_all()?;
+    restore::copy(&point.content, dest)?;
     log::info!(
         "recovery: restored {} to {}",
         point.content.display(),

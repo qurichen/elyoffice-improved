@@ -363,7 +363,7 @@ impl Book {
             Ok(Some(Clip::Html { html, .. })) => Some(html),
             Ok(_) => None,
             Err(error) => {
-                let text = Book::text(cx, "table.data.clipboard", &[("error", &error.to_string())]);
+                let text = Book::text(cx, "table.data.clipboard", &[("error", &format!("{error:#}"))]);
                 return self.toast(text, Severity::Danger, cx);
             }
         };

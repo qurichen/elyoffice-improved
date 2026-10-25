@@ -28,6 +28,7 @@ fn graphic(app: &gpui::App, docs: &Entity<Docs>) -> bool {
 fn references_go_in_through_their_dialogs() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -108,6 +109,7 @@ fn references_go_in_through_their_dialogs() {
 fn formulas_edit_in_place_and_take_captions() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -174,6 +176,7 @@ fn prompts_refuse_empty_and_taken_answers() {
 fn a_long_formula_prefills_whole() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -197,6 +200,7 @@ fn a_long_formula_prefills_whole() {
 fn a_late_dialog_read_never_replaces_a_newer_dialog() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some(docs) = docs(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

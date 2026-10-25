@@ -46,6 +46,7 @@ pub(super) fn cells(cx: &mut TestAppContext, book: &Entity<Book>, range: &str) -
         tab.doc
             .selection_text(&mut worker)
             .expect("the text")
+            .replace("\r\n", "\n")
             .trim()
             .to_string()
     })
@@ -84,6 +85,7 @@ pub(super) fn asked(cx: &TestAppContext, book: &Entity<Book>, is: fn(&Dialog) ->
 fn sort_filter_duplicates_and_columns_run_from_their_dialogs() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -161,6 +163,7 @@ fn sort_filter_duplicates_and_columns_run_from_their_dialogs() {
 fn a_column_button_lists_validation_offers_and_formats_list() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -258,6 +261,7 @@ fn a_column_button_lists_validation_offers_and_formats_list() {
 fn the_panel_reads_number_formats_and_find_counts_cells() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -318,6 +322,7 @@ const BLOCKS: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 fn a_column_button_sorts_its_own_block_not_the_cursors() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;

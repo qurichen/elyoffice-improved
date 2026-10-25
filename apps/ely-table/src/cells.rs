@@ -5,6 +5,7 @@ use ely_gpui_component::{
     forms::TextInput,
     overlays::{Dialog as Card, PromptDialog},
 };
+use ely_lok::sheet;
 use ely_office::prelude::*;
 use gpui::{
     App, AppContext as _, Context, Div, Entity, InteractiveElement as _, Menu, MenuItem, Window,
@@ -118,13 +119,17 @@ impl Book {
         let tab = tab.id;
         self.ask_in(
             tab,
-            |worker, doc| doc.selection_text(worker),
-            move |book, text, _, cx| match text {
-                Ok(text) if filled(&text) > 1 => {
-                    book.open_dialog(Dialog::Merge { tab });
+            |worker, doc| {
+                let at = worker.now(doc)?;
+                Ok((sheet::selected_range(&worker.values(doc, sheet::SELECTED)?)?, at))
+            },
+            move |book, selected, _, cx| match selected {
+                Ok((Some(selected), at)) if selected.filled > 1 => {
+                    book.open_dialog(Dialog::Merge { tab, at });
                     cx.notify();
                 }
-                Ok(_) => book.run_in(id, "cells.merge", &["false"], cx),
+                Ok((Some(_), at)) => book.run_on(tab, &at, "cells.merge", &["false"], cx),
+                Ok((None, _)) => book.warn_key("table.data.one_range", cx),
                 Err(error) => book.engine_failed(&error.to_string(), cx),
             },
             cx,
@@ -153,14 +158,6 @@ impl Book {
         self.open_dialog(Dialog::Size { tab, column, field });
         cx.notify();
     }
-}
-
-/// How many cells of a tab-joined selection hold something.
-fn filled(text: &str) -> usize {
-    text.lines()
-        .flat_map(|line| line.split('\t'))
-        .filter(|cell| !cell.is_empty())
-        .count()
 }
 
 /// Centimeters as 1/100 mm, within what the kernel takes.
@@ -200,19 +197,19 @@ pub fn size_dialog(
 
 pub fn merge_dialog(
     this: Entity<Book>,
-    tab: u64,
+    (tab, at): (u64, &ely_lok::Doc),
     dismiss: impl Fn(&mut Window, &mut App) + 'static,
     cx: &App,
 ) -> Card {
     let choice = |id: &'static str, key: &str, moves: &'static str, variant| {
-        let (this, label) = (this.clone(), Book::text(cx, key, &[]));
+        let (this, label, at) = (this.clone(), Book::text(cx, key, &[]), at.clone());
         move |_| {
             Button::new(id, label)
                 .variant(variant)
                 .on_click(move |_, _, cx| {
                     this.update(cx, |book, cx| {
                         book.dialog = None;
-                        book.run_in(Some(tab), "cells.merge", &[moves], cx);
+                        book.run_on(tab, &at, "cells.merge", &[moves], cx);
                     })
                 })
         }
@@ -243,9 +240,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn filled_cells_and_sizes() {
-        assert_eq!(filled("1\tb\n\t\n"), 2);
-        assert_eq!(filled("\t\n"), 0);
+    fn centimeter_sizes_stay_within_the_kernel_limit() {
         assert_eq!(hundredths("2.54"), Some(2540));
         assert_eq!(hundredths("1,5"), Some(1500));
         assert_eq!(hundredths("0"), None);

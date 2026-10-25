@@ -27,6 +27,7 @@ fn ask(cx: &mut TestAppContext, book: &Entity<Book>, asked: Asked, is: fn(&Dialo
 fn a_pivot_table_is_made_then_changed_in_place() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -96,6 +97,7 @@ fn a_pivot_table_is_made_then_changed_in_place() {
 fn a_chart_is_inserted_then_edited() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
@@ -156,6 +158,7 @@ fn a_chart_is_inserted_then_edited() {
 fn asking_on_an_empty_cell_leaves_enter_moving_down() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut cx = TestAppContext::single();
+    let _quit = ely_ui::testing::quit_on_drop(&cx);
     let Some((_window, book)) = book(&mut cx, dir.path()) else {
         eprintln!("SKIP: no LOK build");
         return;
