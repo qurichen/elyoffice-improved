@@ -17,6 +17,7 @@ use crate::files::TEMPLATES;
 use crate::refs::Ask;
 
 pub enum Dialog {
+    Translation(Entity<crate::translate::Translation>),
     Templates,
     Table {
         columns: f64,
@@ -63,6 +64,7 @@ impl Docs {
             }
         };
         let card = match self.dialog.as_ref()? {
+            Dialog::Translation(panel) => return Some(panel.clone().into_any_element()),
             Dialog::Templates => templates(this, dismiss, cx),
             Dialog::Section => {
                 return Some(crate::insert::section_dialog(this, dismiss, cx).into_any_element());

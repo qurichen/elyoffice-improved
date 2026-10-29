@@ -146,10 +146,8 @@ fn ole_has_vba(bytes: &[u8]) -> bool {
         .flat_map(u16::to_le_bytes)
         .collect();
     // 128-byte entries: name, byte length, type 2.
-    (512..bytes.len().saturating_sub(128))
-        .step_by(128)
-        .any(|at| {
-            let entry = &bytes[at..at + 128];
+    bytes.get(512..).unwrap_or_default().chunks_exact(128)
+        .any(|entry| {
             entry.starts_with(&name)
                 && u16::from_le_bytes([entry[64], entry[65]]) as usize == name.len() + 2
                 && entry[66] == 2
@@ -184,6 +182,27 @@ mod tests {
         save_as: &["docx", "odt"],
         macros: Some(&["docm", "dotm"]),
     };
+
+    #[test]
+    fn the_last_complete_ole_directory_slot_is_scanned() {
+        let mut bytes = vec![0u8; 1536];
+        bytes[..8].copy_from_slice(&[0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+        let name: Vec<_> = "_VBA_PROJECT".encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let at = bytes.len() - 128;
+        bytes[at..at + name.len()].copy_from_slice(&name);
+        bytes[at + 64..at + 66].copy_from_slice(&((name.len() + 2) as u16).to_le_bytes());
+        bytes[at + 66] = 2;
+        let dir = tempfile::tempdir().expect("fixture folder");
+        let path = dir.path().join("last-slot.doc");
+        std::fs::write(&path, &bytes).expect("fixture bytes");
+        assert!(macro_risk(&KIND, &path).expect("macro scan"));
+        assert!(ole_has_vba(&bytes));
+        bytes.truncate(bytes.len() - 1);
+        assert!(!ole_has_vba(&bytes), "an incomplete final slot is ignored");
+        for len in [0, 8, 511, 512, 639] {
+            assert!(!ole_has_vba(&vec![0; len]), "short input: {len}");
+        }
+    }
 
     #[test]
     fn saves_keep_the_format_and_save_as_converts() {

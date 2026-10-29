@@ -5,10 +5,7 @@ use ely_gpui_component::{
     primitives::Severity,
     tables::{FilterRule, SortKey, Test},
 };
-use ely_lok::{
-    Request,
-    sheet::{self, Entry, Selection},
-};
+use ely_lok::sheet::{self, Selection};
 use ely_office::prelude::*;
 use ely_platform::clipboard::{self, Clip};
 use gpui::{
@@ -23,6 +20,8 @@ use crate::dialog::Dialog;
 pub(crate) type ReadState = (ely_lok::Doc, usize);
 
 mod dialogs;
+mod column;
+pub use column::column_query;
 pub use dialogs::{column_dialog, columns_dialog, dedupe_dialog, filter_dialog, sort_dialog};
 
 actions!(
@@ -114,22 +113,6 @@ pub fn query(rules: &[FilterRule], any: bool) -> String {
         })
         .collect();
     serde_json::json!({ "conditions": conditions }).to_string()
-}
-
-/// The `data.filter` query keeping `picked` of a column.
-pub fn column_query(column: u32, entries: &[Entry], picked: &[SharedString]) -> String {
-    if entries
-        .iter()
-        .all(|entry| picked.iter().any(|p| *p == entry.text))
-    {
-        return serde_json::json!({ "column": column }).to_string();
-    }
-    let values: Vec<&str> = picked.iter().map(SharedString::as_ref).collect();
-    serde_json::json!({
-        "column": column,
-        "conditions": [{ "op": "values", "values": values }],
-    })
-    .to_string()
 }
 
 /// The `data.sort` values for up to three keys.
@@ -233,6 +216,7 @@ impl Book {
                 let (first, ..) = picked.area.expect("a data area");
                 Dialog::Sort {
                     tab: id,
+                    at: state.0,
                     keys: vec![SortKey {
                         column: first.to_string().into(),
                         rising: true,
@@ -243,6 +227,7 @@ impl Book {
             }
             Asked::Filter => Dialog::Filter {
                 tab: id,
+                at: state.0,
                 rules: Vec::new(),
                 any: false,
                 picked,
@@ -264,15 +249,15 @@ impl Book {
         };
         match dialog {
             Dialog::Sort {
-                tab, keys, header, ..
+                tab, at, keys, header, ..
             } => {
                 let values = sort_values(header, &keys);
                 let values: Vec<&str> = values.iter().map(String::as_str).collect();
-                self.run_in(Some(tab), "data.sort", &values, cx);
+                self.run_on(tab, &at, "data.sort", &values, cx);
             }
             Dialog::Filter {
-                tab, rules, any, ..
-            } => self.run_in(Some(tab), "data.filter", &[&query(&rules, any)], cx),
+                tab, at, rules, any, ..
+            } => self.run_on(tab, &at, "data.filter", &[&query(&rules, any)], cx),
             Dialog::Dedupe {
                 tab,
                 header,
@@ -308,7 +293,7 @@ impl Book {
         self.data_of(
             id,
             false,
-            move |book, picked, _, window, cx| {
+            move |book, picked, state, window, cx| {
                 let (c1, _, c2, _) = picked.area.expect("a data area");
                 if c1 != c2 {
                     return book.warn_key("table.columns.same", cx);
@@ -316,6 +301,7 @@ impl Book {
                 let other = cx.new(|cx| TextInput::new(window, cx));
                 book.open_dialog(Dialog::Columns {
                     tab: id,
+                    at: state.0,
                     separators: vec!["9".into()],
                     other,
                 });
@@ -329,6 +315,7 @@ impl Book {
     pub(crate) fn columns_asked(&mut self, cx: &mut Context<Self>) {
         let Some(Dialog::Columns {
             tab,
+            at,
             separators,
             other,
         }) = self.dialog.take()
@@ -341,7 +328,7 @@ impl Book {
         }
         // Separators, quote, UTF-8, first row.
         let options = format!("{},34,76,1", codes.join("/"));
-        self.run_in(Some(tab), "data.columns", &[&options], cx);
+        self.run_on(tab, &at, "data.columns", &[&options], cx);
     }
 
     fn paste_only(&mut self, id: &'static str, cx: &mut Context<Self>) {
@@ -375,75 +362,12 @@ impl Book {
         view.update(cx, |view, _| view.paste_only(id));
     }
 
-    /// The filter menu a column button asks for.
-    pub(crate) fn ask_column(&mut self, id: u64, request: &Request, cx: &mut Context<Self>) {
-        let Request::Filter { column, row } = *request else {
-            return;
-        };
-        self.ask_in(
-            id,
-            move |worker, doc| {
-                let json = worker.values(doc, &sheet::cell_query(sheet::FILTER, column, row))?;
-                sheet::filter_values(&json)
-            },
-            move |book, read, _, cx| match read {
-                Ok(filter) => {
-                    let picked = filter
-                        .entries
-                        .iter()
-                        .filter(|entry| entry.selected)
-                        .map(|entry| SharedString::from(entry.text.clone()))
-                        .collect();
-                    book.open_dialog(Dialog::Column {
-                        tab: id,
-                        column,
-                        row,
-                        entries: filter.entries,
-                        picked,
-                    });
-                    cx.notify();
-                }
-                Err(error) => book.engine_failed(&error.to_string(), cx),
-            },
-            cx,
-        );
-    }
-
-    /// Keeps the picked entries, or sorts by the column.
-    pub(crate) fn column_asked(&mut self, sort: Option<bool>, cx: &mut Context<Self>) {
-        let Some(Dialog::Column {
-            tab,
-            column,
-            row,
-            entries,
-            picked,
-        }) = self.dialog.take()
-        else {
-            return;
-        };
-        // The kernel filters the cursor's range: go to the button.
-        self.run_in(Some(tab), "cell.goto", &[&sheet::address(column, row)], cx);
-        match sort {
-            Some(rising) => {
-                let key = SortKey {
-                    column: column.to_string().into(),
-                    rising,
-                };
-                let values = sort_values(true, &[key]);
-                let values: Vec<&str> = values.iter().map(String::as_str).collect();
-                self.run_in(Some(tab), "data.sort", &values, cx);
-            }
-            None => {
-                let query = column_query(column, &entries, &picked);
-                self.run_in(Some(tab), "data.filter", &[&query], cx);
-            }
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ely_lok::sheet::Entry;
 
     #[test]
     fn rules_and_keys_become_kernel_values() {

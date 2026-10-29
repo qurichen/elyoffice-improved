@@ -16,6 +16,10 @@ use crate::book::Book;
 use crate::dialog::Dialog;
 
 mod dialogs;
+#[cfg(test)]
+mod delimiter_tests;
+#[cfg(test)]
+mod delimiter_fields_tests;
 pub use dialogs::import_dialog;
 
 /// Extensions the import dialog reads.
@@ -37,6 +41,7 @@ pub struct Pending {
     pub path: PathBuf,
     bytes: Arc<Vec<u8>>,
     pub how: Import,
+    pub text_only: bool,
     /// The first rows as the choices read them.
     pub rows: Vec<Vec<String>>,
     /// The chosen encoding does not read the file.
@@ -56,21 +61,31 @@ struct Scan {
 
 impl Pending {
     pub(crate) fn new(path: PathBuf, bytes: Vec<u8>, chinese: bool) -> Self {
+        let encoding = guess_encoding(&bytes, chinese);
         let how = Import {
-            separator: guess_separator(&path, &bytes),
+            separator: guess_separator(&path, &bytes, encoding),
             quote: Some('"'),
-            encoding: guess_encoding(&bytes, chinese),
+            encoding,
             columns: Vec::new(),
         };
         Pending {
             path,
             bytes: Arc::new(bytes),
             how,
+            text_only: false,
             rows: Vec::new(),
             broken: false,
             reading: true,
             asked: 0,
         }
+    }
+
+    pub(crate) fn import_options(&self) -> Import {
+        let mut how = self.how.clone();
+        if self.text_only {
+            how.columns.fill(Column::Text);
+        }
+        how
     }
 }
 
@@ -116,20 +131,42 @@ fn guess_encoding(sample: &[u8], chinese: bool) -> Encoding {
     }
 }
 
-/// TSV by name, else line one's commonest separator.
-fn guess_separator(path: &Path, sample: &[u8]) -> char {
+/// TSV by name, else the first decoded record.
+fn guess_separator(path: &Path, sample: &[u8], encoding: Encoding) -> char {
     let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
     if ["tsv", "tab"].contains(&ext.to_ascii_lowercase().as_str()) {
         return '\t';
     }
-    let line = sample.split(|byte| *byte == b'\n').next().unwrap_or(&[]);
-    let count = |separator: char| line.iter().filter(|byte| char::from(**byte) == separator).count();
+    let Some(text) = decode(sample, encoding) else {
+        return ',';
+    };
+    let mut counts = [0; 4];
+    let mut chars = text.chars().peekable();
+    let mut start = true;
+    while let Some(c) = chars.next() {
+        if c == '"' && start {
+            while let Some(c) = chars.next() {
+                if c == '"' && chars.next_if_eq(&'"').is_none() {
+                    break;
+                }
+            }
+            start = false;
+        } else if let Some(at) = SEPARATORS[..4].iter().position(|separator| *separator == c) {
+            counts[at] += 1;
+            start = true;
+        } else if matches!(c, '\r' | '\n') {
+            break;
+        } else if c != ' ' {
+            start = false;
+        }
+    }
     SEPARATORS[..4]
         .iter()
         .copied()
+        .zip(counts)
         .rev()
-        .max_by_key(|separator| count(*separator))
-        .filter(|separator| count(*separator) > 0)
+        .max_by_key(|(_, count)| *count)
+        .map(|(separator, _)| separator)
         .unwrap_or(',')
 }
 
@@ -315,15 +352,16 @@ impl Book {
         }) else {
             return;
         };
-        let how = &pending.how;
+        let how = pending.import_options();
         log::info!(
-            "table: imports as {:?}, {:?}, quote {:?}",
+            "table: imports as {:?}, {:?}, quote {:?}, text only {}",
             how.encoding,
             how.separator,
-            how.quote
+            how.quote,
+            pending.text_only
         );
         let name = ely_office::files::file_name(&pending.path);
-        self.import_text(&name, Arc::clone(&pending.bytes), pending.how.clone(), cx);
+        self.import_text(&name, Arc::clone(&pending.bytes), how, cx);
         cx.notify();
     }
 }
@@ -345,9 +383,9 @@ mod tests {
     #[test]
     fn guesses_follow_the_bytes_and_the_name() {
         let csv = Path::new("a.csv");
-        assert_eq!(guess_separator(csv, b"a;b;c,d\n1;2"), ';');
-        assert_eq!(guess_separator(csv, b"one\n"), ',');
-        assert_eq!(guess_separator(Path::new("a.TSV"), b"a,b"), '\t');
+        assert_eq!(guess_separator(csv, b"a;b;c,d\n1;2", Encoding::Utf8), ';');
+        assert_eq!(guess_separator(csv, b"one\n", Encoding::Utf8), ',');
+        assert_eq!(guess_separator(Path::new("a.TSV"), b"a,b", Encoding::Utf8), '\t');
         assert_eq!(guess_encoding("名称".as_bytes(), false), Encoding::Utf8);
         assert_eq!(guess_encoding(&[0xC3, 0xFB], true), Encoding::Gb18030);
         assert_eq!(guess_encoding(&[0xC3, 0xFB], false), Encoding::Windows1252);

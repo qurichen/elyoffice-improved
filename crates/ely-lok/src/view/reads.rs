@@ -6,6 +6,11 @@ use super::LokView;
 use crate::Rect;
 
 impl LokView {
+    /// Whether a canvas press has not been released.
+    pub fn pointer_held(&self) -> bool {
+        self.dragging || self.grip.is_some() || self.holds_border()
+    }
+
     /// Whether the kernel was told Ely's scheme.
     pub fn lit(&self) -> bool {
         self.lit

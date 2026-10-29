@@ -57,7 +57,24 @@ fn snapshot(batch: &Events) -> Events {
         blocked: Vec::new(),
         menu: None,
         faults: Vec::new(),
-        ..batch.clone()
+        seq: batch.seq,
+        revision: batch.revision,
+        generation: batch.generation,
+        cursor: batch.cursor,
+        cursor_visible: batch.cursor_visible,
+        pointer: batch.pointer.clone(),
+        selection: batch.selection.clone(),
+        graphic: batch.graphic,
+        cropping: batch.cropping,
+        review: batch.review,
+        searched: batch.searched,
+        resized: batch.resized,
+        found: batch.found.clone(),
+        fonts: batch.fonts.clone(),
+        a11y: batch.a11y.clone(),
+        tabs: batch.tabs.clone(),
+        cell: batch.cell.clone(),
+        table: batch.table.clone(),
     }
 }
 
@@ -162,6 +179,34 @@ impl Feed {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshots_keep_document_state_without_replaying_one_shot_events() {
+        let feed = Feed::default();
+        feed.opened(1);
+        let mut batch = Events {
+            seq: 7, revision: 8, generation: 9, all: true,
+            rects: vec![(1, 2, 3, 4)], cursor: Some((5, 6, 7, 8)), cursor_visible: true,
+            pointer: "text".into(), selection: vec![(9, 10, 11, 12)], graphic: Some((13, 14, 15, 16)),
+            cropping: true, review: 10, searched: 11, resized: 12, found: vec![(17, 18, 19, 20)],
+            menu: Some("context".repeat(10000)), faults: vec!["fault".into()], fonts: vec!["missing".into()],
+            states: vec![("state".into(), "changed".into())], blocked: vec!["dialog".into()],
+            a11y: crate::events::A11y { text: "paragraph".into(), caret: Some(3), selection: Some((2, 4)) },
+            tabs: vec![123, 456],
+            cell: crate::events::Cell { formula: "=SUM(A1:A2)".into(), address: "A3".into(), ..Default::default() },
+            table: None,
+        };
+        feed.push(1, batch.clone());
+        let doc = Doc { worker: 0, id: 1, rev: 0, kind: 0 };
+        let first = feed.wait(&doc, 0, 0).expect("fresh batch");
+        assert_eq!(format!("{first:?}"), format!("{batch:?}"));
+        batch.all = false;
+        batch.rects.clear(); batch.states.clear(); batch.blocked.clear(); batch.faults.clear(); batch.menu = None;
+        let idle = feed.wait(&doc, 7, 0).expect("snapshot");
+        assert_eq!(format!("{idle:?}"), format!("{batch:?}"));
+        let again = feed.wait(&doc, 7, 0).expect("same snapshot");
+        assert_eq!(format!("{again:?}"), format!("{batch:?}"));
+    }
 
     #[test]
     fn queued_batches_keep_their_one_shot_parts() {

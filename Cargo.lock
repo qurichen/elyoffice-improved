@@ -1960,11 +1960,17 @@ dependencies = [
  "ely-ui",
  "embed-resource",
  "env_logger",
+ "futures",
  "gpui-pre",
  "image",
  "jiff",
+ "keyring",
  "log",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
  "tempfile",
+ "ureq",
 ]
 
 [[package]]
@@ -1987,7 +1993,6 @@ dependencies = [
 [[package]]
 name = "ely-gpui-component"
 version = "0.1.1"
-source = "git+https://git.zacharyzhang.com/ZacharyZhang-NY/Ely-GPUI-Components?rev=de961eb164c1c88797ea35f0860aba9d18c95e4f#de961eb164c1c88797ea35f0860aba9d18c95e4f"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -1995,15 +2000,20 @@ dependencies = [
  "base64 0.22.1",
  "block",
  "cocoa 0.26.0",
+ "core-foundation 0.10.0",
+ "core-graphics 0.24.0",
  "emojis",
+ "env_logger",
  "futures",
  "gpui-pre",
  "gpui-pre-platform",
+ "gpui-pre-web",
  "image",
  "iso_currency",
  "isocountry",
  "isolang",
  "jiff",
+ "js-sys",
  "log",
  "markdown",
  "mermaid-rs-renderer",
@@ -2027,6 +2037,8 @@ dependencies = [
  "unicode-width",
  "usvg",
  "vte",
+ "wasm-bindgen",
+ "web-sys",
  "web-time",
  "wry",
 ]

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ely · GPUI components</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="description" content="A component library for GPUI, in light and dark. Its stories run live in the browser, or as native captures where a browser cannot run them." />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Ely · GPUI components" />
+    <meta property="og:description" content="A component library for GPUI, its stories live in the browser, compiled from Rust to WebAssembly." />
+    <meta property="og:image" content="https://elygpui.com/og.png" />
+    <meta property="og:image:width" content="2400" />
+    <meta property="og:image:height" content="1260" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://elygpui.com/og.png" />
+    <script>
+      // The saved mode, or the system's, before first paint.
+      let saved = null;
+      try {
+        saved = localStorage.getItem("ely-theme");
+      } catch (error) {
+        console.warn("theme: no saved mode", error);
+      }
+      const dark = saved ? saved === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+      document.documentElement.classList.toggle("dark", dark);
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -70,12 +70,14 @@ pub enum Dialog {
     },
     Sort {
         tab: u64,
+        at: ely_lok::Doc,
         picked: Selection,
         keys: Vec<SortKey>,
         header: bool,
     },
     Filter {
         tab: u64,
+        at: ely_lok::Doc,
         picked: Selection,
         rules: Vec<FilterRule>,
         any: bool,
@@ -88,12 +90,14 @@ pub enum Dialog {
     },
     Columns {
         tab: u64,
+        at: ely_lok::Doc,
         separators: Vec<SharedString>,
         other: Entity<TextInput>,
     },
     /// A column button's filter menu.
     Column {
         tab: u64,
+        at: ely_lok::Doc,
         column: u32,
         /// The button's row: its cell names the filtered range.
         row: u32,

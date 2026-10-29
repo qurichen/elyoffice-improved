@@ -1,0 +1,36 @@
+name: Component Request
+description: A component Ely lacks, or one that should do more.
+title: "[Component Request] "
+labels: [enhancement]
+body:
+  - type: input
+    id: name
+    attributes:
+      label: Component
+      placeholder: ColorWheel
+    validations:
+      required: true
+  - type: textarea
+    id: use
+    attributes:
+      label: What it is for
+      description: The app and the moment you need it in.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: How it should behave
+      description: Mouse, keys, states, light and dark.
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Links or screenshots of it elsewhere.
+  - type: checkboxes
+    id: searched
+    attributes:
+      label: Checked
+      options:
+        - label: I searched the components page at elygpui.com and the open issues.
+          required: true

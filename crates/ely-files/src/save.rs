@@ -8,6 +8,7 @@ use crate::{Fingerprint, SaveState, Session};
 #[cfg(all(test, target_os = "macos"))]
 mod full;
 mod staging;
+mod names;
 #[cfg(test)]
 mod tests;
 #[cfg(windows)]
@@ -229,6 +230,7 @@ fn attach(
     name: &Path,
     fill: impl FnOnce(&mut std::fs::File) -> io::Result<()>,
 ) -> io::Result<PathBuf> {
+    names::validate(name)?;
     std::fs::create_dir_all(dir).map_err(|e| with_path(dir, e))?;
     let stem = name
         .file_stem()

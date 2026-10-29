@@ -1,0 +1,59 @@
+name: Bug Report
+description: Something draws, behaves or builds wrong.
+title: "[Bug Report] "
+labels: [bug]
+body:
+  - type: input
+    id: component
+    attributes:
+      label: Component
+      description: The component's name, as the components page shows it.
+      placeholder: Dialog
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where
+      options:
+        - Native gallery, macOS
+        - Native gallery, Windows
+        - Native gallery, Linux
+        - Live example on elygpui.com
+        - My own app
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: A screenshot or a short recording helps most.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the Overlays page
+        2. Press Open dialog
+        3. Press Tab twice
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit or version
+      placeholder: 259ee2a
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Terminal output, or the browser console for the website.
+      render: shell

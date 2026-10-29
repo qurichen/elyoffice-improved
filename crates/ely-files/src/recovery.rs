@@ -7,6 +7,7 @@ use std::{
 #[cfg(test)]
 mod tests;
 mod restore;
+mod clock;
 
 /// One recovery point and what it restores (§6.3).
 #[derive(Clone, Debug)]
@@ -52,6 +53,10 @@ impl Recovery {
 
     /// Prunes expired points; call after every (re)open (§6.2).
     pub fn maintain(&self, now: SystemTime) -> io::Result<()> {
+        if !self.dir.try_exists()? {
+            return Ok(());
+        }
+        let _guard = self.lock()?;
         self.prune(now)
     }
 
@@ -115,6 +120,7 @@ impl Recovery {
                 format!("the recovery point exceeds its {} byte cap", self.cap),
             ));
         }
+        let _guard = self.lock()?;
         self.running = true;
         let result = self.write_inner(content, cursor, now);
         self.running = false;
@@ -138,7 +144,7 @@ impl Recovery {
     ) -> io::Result<PathBuf> {
         let dir = self.dir.join("points");
         std::fs::create_dir_all(&dir)?;
-        let stamp = stamp_of(now)?;
+        let stamp = self.next_stamp(now)?;
         if let Some(key) = self.key {
             let cursor_bytes = cursor.map(|text| text.as_bytes()).unwrap_or(&[]);
             let mut bundle = vec![u8::from(cursor.is_some())];
@@ -149,14 +155,14 @@ impl Recovery {
             let mut point = nonce.to_vec();
             point.extend_from_slice(&sealed);
             let enc = dir.join(format!("{stamp}.enc"));
-            crate::save_atomic(&enc, &point, 0)?;
+            restore::publish(&enc, |file| file.write_all(&point))?;
             log::info!("recovery: a sealed point at {}", enc.display());
             return Ok(enc);
         }
         let content_path = dir.join(format!("{stamp}.bin"));
-        crate::save_atomic(&content_path, content, 0)?;
+        restore::publish(&content_path, |file| file.write_all(content))?;
         if let Some(cursor) = cursor {
-            crate::save_atomic(&dir.join(format!("{stamp}.cursor")), cursor.as_bytes(), 0)?;
+            restore::publish(&dir.join(format!("{stamp}.cursor")), |file| file.write_all(cursor.as_bytes()))?;
         }
         log::info!("recovery: a point at {}", content_path.display());
         Ok(content_path)
@@ -279,6 +285,7 @@ impl Recovery {
 
     /// An explicit discard: points go, the result stays recorded (§6.2).
     pub fn discard(&mut self) -> io::Result<()> {
+        let _guard = self.lock()?;
         for stamp in self.stamps()? {
             self.drop(stamp)?;
         }

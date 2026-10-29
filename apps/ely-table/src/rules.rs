@@ -200,6 +200,16 @@ impl Book {
         if tab.extra.requests == count {
             return;
         }
+        if matches!(&request, Some(Request::Filter { .. })) {
+            if tab.extra.filter_read.as_ref().is_none_or(|(seen, _)| *seen != count) {
+                tab.extra.filter_read = Some((count, view.read(cx).request_read()));
+            }
+            if view.read(cx).pointer_held() || !view.read(cx).settled() {
+                return;
+            }
+        } else {
+            tab.extra.filter_read = None;
+        }
         tab.extra.requests = count;
         match request {
             Some(request @ Request::Filter { .. }) => self.ask_column(id, &request, cx),

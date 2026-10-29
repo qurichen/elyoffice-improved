@@ -136,6 +136,7 @@ pub fn open(app: AppId, window: &mut Window, cx: &mut App) -> Entity<Root> {
         crate::insert::menu(cx),
         crate::review::menu(cx),
         crate::merge::menu(cx),
+        crate::translate::menu(cx),
     ];
     let root = ely_ui::document_root(app, docs.clone().into(), &ely_ui::commands::FILE, menus, window, cx);
     docs.update(cx, |docs, cx| {
@@ -237,6 +238,7 @@ impl Render for Docs {
             .on_action(cx.listener(Self::on_save))
             .on_action(cx.listener(Self::on_save_as))
             .on_action(cx.listener(Self::on_close_tab))
+            .on_action(cx.listener(Self::on_translate))
             .child(shell)
             .children(self.core_dialog(cx))
             .children(self.dialog_element(window, cx));

@@ -107,6 +107,7 @@ impl LokView {
                     }
                     self.edited += u64::from(edits);
                     let (outcome, now) = outcome;
+                    self.pointer_input.landed(seq, now, &self.doc);
                     // A plain key took nothing; the menu may return.
                     let taken = matches!(outcome, Ok(Some(Back::Completed(true))));
                     self.completion.landed(seq, if taken { now } else { None });

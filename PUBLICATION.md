@@ -1,94 +1,111 @@
-# Experimental source preview / 实验性源码预览
+# Source update / 源码更新 — 2026-10-29
 
-Updated 2026-10-25: cumulative ElyOffice improvements through round 17,
-following the round-10 import. This is a source update, not an upstream
-release, installer or claim of complete Microsoft Office compatibility.
+This experimental fork now includes completed work through round 26 and the
+2026-10-28 source audit. It updates the source previously published through
+round 17. No installer, compiled application, tag or GitHub Release accompanies
+this commit; the upstream version number is not a new fork release number.
 
-2026-10-25更新：在第10轮公开版本上整合截至第17轮的累计源码改进。
-本次发布源码，不发布安装包，也不代表原作者的官方版本或全面兼容微软Office。
+本次将此前公开到第17轮的源码更新至第26轮，并纳入2026年10月28日源码审计的
+六处修复与优化。这是实验性改进分支的源码更新，不提供安装包或编译程序，
+不创建标签或GitHub Release，也不把上游版本号当作本分支的新发行版本。
 
-## Changes since round 10 / 第10轮之后的更新
+## Included improvements / 更新内容
 
-- Safer recovery validation, no-overwrite restoration and scratch-file ownership;
-  shared test-process cleanup and repeatable Windows native save/reopen checks.
-- Windows logical-DPI rendering and the reproduced deep-profile startup repair.
-- Selective upstream office-core backports, retaining this fork's save/recovery
-  safeguards, OOXML work and separate update channel.
-- Table merge decisions include empty-result formulas and remain bound to the
-  original document/selection. Delayed commands reject stale or foreign targets.
-- Shared command dispatch is separated from lifecycle and painting. Explicit
-  slide notes retain their original page across plain page switches, while
-  edits or page reordering invalidate old requests. Apps and worker must update
-  together for the added selection-context protocol check.
+- Document and selection context checks for delayed Table operations; Windows
+  close lifecycle repairs; recovery index, shutdown and clock-order protections.
+- A pinned, locally patched GPUI component source tree fixes stale text-layout
+  hit testing. Its upstream MIT licence and resource notices remain included.
+- CSV delimiter handling and an optional **Keep all fields as text** import mode
+  preserve numeric/date-like spellings. Ordinary numeric import remains default.
+- Opt-in English/Chinese selected-text translation in ElyDoc: configurable Chat
+  Completions endpoint/model, system credential storage, preview and copy.
+  It sends only the previewed selection on explicit request. A local endpoint
+  may still relay to a cloud service. ElyAgent remains unfinished.
+- The source audit fixes Windows shell interpretation of file names, attachment
+  name boundaries and the final OLE macro-directory slot. It bounds worker-log
+  records, reads only the required log tail, and avoids discarded event copies.
 
-- 加强恢复校验、无覆盖恢复及临时文件归属保护，完善测试退出回收和可重复的
-  Windows原生保存、重开验收。
-- 修复已复现的高缩放重复DPI渲染和深层资料目录启动问题。
-- 选择性整合上游办公核心更新，保留本分支的保存恢复、OOXML修复和独立更新源。
-- 修复空结果公式的合并确认，并将确认绑定原文档、原选区，拒绝过期或跨文档命令。
-- 拆分共用命令调度；翻页后备注仍写回原页，内容或页序改变则拒绝旧请求。
-  新增上下文检查协议要求应用和工作进程配套更新。
+- 加强表格延迟操作的原文档与选区校验、Windows关闭生命周期、恢复索引、退出
+  保存和时钟顺序保护。
+- 纳入固定版本及本地修复的GPUI组件源码，修复旧文本布局与新文本不匹配的问题，
+  保留MIT许可和资源声明。
+- 修复CSV分隔符处理，增加可选的全部按文本导入，保留数字与日期原始写法，
+  普通数值导入仍是默认行为。
+- ElyDoc提供默认关闭的中英选区翻译，可设置地址、模型及系统保存的密钥。
+  仅在明确点击时发送预览选区，译文可预览和复制。局部服务可能转发到云端，
+  不宣称只要使用本地地址就完全离线；ElyAgent仍未完成。
+- 审计修复特殊文件名解释、附件名称越界和OLE宏末目录项漏检；限制长日志读取，
+  裁剪日志时仅读尾部，减少事件快照的无用复制。
 
-## Evidence and limits / 验证与限制
+## Validation and remaining limits / 验证与限制
 
-The engine patch series now contains 72 patches, compared with 63 in the
-previous public snapshot. The latest round passed 224 distinct tests in eight
-groups, rebuilt the three office apps and worker in optimized mode, and passed
-the bounded Table/Show native save-and-reopen checks. No test was skipped or
-force-cleaned in those accepted groups. Earlier rounds retain their own results;
-historical counts are not added together as a current test total.
+The latest source audit passed **501 distinct Rust tests and 15 website tests**,
+including 12 new Rust regressions. The Rust groups were IPC 8, files 132,
+platform 62, Office shell 34, event Feed 2, Doc 79, Table 87, Show 92 and i18n 5.
+Two existing subprocess entry points remain marked ignored and are called by
+their parent tests; they are not added to the pass count. Historical/repeated
+runs are not accumulated. The frozen regressions, before/after Windows filename
+launch fixture, source protection checks and independent R1 review passed.
 
-补丁序列从此前公开的63项增加到72项。第17轮最终8组224项不同测试通过，
-三应用与工作进程优化构建完成，表格和演示的限定原生保存、重开流程通过。
-验收组无跳过或强制清理；旧轮次结果分别保留，不累加为当前测试总数。
+最近一次源码审计通过501项不同Rust测试及15项官网测试，其中新增Rust回归12项。
+已有的两个子进程测试入口仍标记ignored，由父测试调用，不计入通过数量。
+修前失败、旧构建缓存运行及历史重复运行均未累加。Windows特殊文件名实际启动
+对照、原文件保护及独立R1审查通过；发布准备期间没有重复运行产品测试。
 
-See [round 17 validation](docs/windows-validation-round17.md),
-[the independent review](docs/reviews/round17-command-r1.md),
-[upstream integration](docs/upstream-integration-batch1.md), and
-[Office pain points and architecture](docs/office-pain-points-architecture.md).
-The Table native log retains an invalid-window-handle message after closing a
-window; its cause is not claimed fixed. General visual fidelity, system IME,
-other DPI configurations, printing, encrypted native recovery, multi-day use
-and installer/upgrade/uninstall acceptance remain open. Ordered batches are
-not atomic transactions. No extension SDK or performance advantage is claimed.
+Full-workspace Clippy could not finish because the Windows MuPDF build library
+was absent. All targets of the other 12 first-party workspace members passed,
+with seven pre-existing warnings. PDF/Mark/MuPDF-dependent targets, full UI/LOK
+suites, website production build and browser E2E are not claimed validated.
+Native translation trials used a fixed local fixture, not a real model service.
+Macro scanning still reads full files on the window callback and can delay large
+file opening. General Office fidelity, system IME, multiple displays, extended
+use, installation/upgrade/uninstall, and macOS/Linux runtime acceptance remain
+open. The earlier round-23 failure keeps its historical attribution limit.
 
-表格关闭窗口后的一条句柄报错保留为待调查诊断，不声称根因已修复。
-复杂文档视觉、系统输入法、更多DPI、打印、原生加密恢复、多日使用和安装升级
-仍有待验收；顺序批次不等于原子事务，也未提供完整插件SDK或性能优势承诺。
+全工作区静态检查因缺少MuPDF的Windows编译库未完成；其余12个自有成员的全部
+目标检查通过，保留7条旧警告。不据此验收PDF/Markdown、整套UI/LOK测试、官网
+生产构建或浏览器端到端流程。翻译验证使用固定的本机测试服务，未验证真实模型
+质量。宏扫描仍可能因同步整文件读取拖慢大文件打开。复杂文档、输入法、多屏、
+长期使用、安装升级和其他平台等仍有待验收，旧失败记录没有被改写为通过。
 
-## Origin and licence / 来源与许可
+See the [source-audit report](docs/source-audit-20261028.zh-CN.md),
+[its independent review](docs/reviews/source-audit-20261028-r1.md),
+[round 26](docs/windows-validation-round26.md),
+[round 25](docs/windows-validation-round25.md), and
+[the improvement roadmap](docs/optimization-path-after-round18.zh-CN.md).
+Historical records saying “not published” describe their round's completion;
+this later commit publishes the reviewed source, not their local build artifacts.
 
-- Original baseline: [ZacharyZhang-NY/ElyOffice](https://git.zacharyzhang.com/ZacharyZhang-NY/ElyOffice),
-  `0d991e1c715859abd1282981fd46989e7e2319c7` (0.1.8).
-- Selected newer office-core sources are identified in the integration record;
-  this is not a full upstream 0.1.11 upgrade.
-- Original attribution and root AGPL-3.0-or-later remain. Imported MIT notices
-  are retained in `LICENSES/elyoffice-upstream-MIT.txt`; third-party engines
-  and resources keep their respective licences.
-- 保留原作者署名、根AGPL许可、选择性引入代码的MIT声明及第三方许可。
+## Origin, licences and publication / 来源、许可与公开清理
 
-## Publication hygiene / 公开文件清理
+The baseline remains [ZacharyZhang-NY/ElyOffice](https://git.zacharyzhang.com/ZacharyZhang-NY/ElyOffice)
+at `0d991e1c715859abd1282981fd46989e7e2319c7`. Original authorship, the root
+AGPL-3.0-or-later licence, the imported MIT notice and third-party resource
+licences remain. The 72 LibreOffice patches are preserved. This is not an
+official upstream release or a full upstream-version upgrade.
 
-This update preserves the existing GitHub history and adds a normal descendant
-commit. It exports the current working source rather than the old staged index,
-leaving the local source tree and staging area intact. Git text line endings
-are normalized where needed; code, test assertions and engine patches receive
-no publication-specific semantic edits.
+This descendant commit preserves GitHub history. The export excludes local
+Git metadata, `.work`, downloaded engines/reference trees, build outputs,
+caches, personal documents, raw diagnostics and internal planning files.
+Referenced review reports are explicitly copied to `docs/reviews` and their
+documentation links updated. Text line endings may be normalized. Production
+implementation and Office regression assertions receive no publication-specific
+edits. At the owner's request, remaining credential-shaped gallery and component-test
+samples are replaced with unmistakably invalid demo placeholders. Matching test
+expectations are updated consistently; test control flow is unchanged. The
+eight-character password boundary and six-digit code cases keep their original
+length/character-class conditions. These fixtures do not authenticate to services. The original local working tree, staging area and upstream
+remote are left unchanged.
 
-The source export excludes local `.git`/`.work`, engines/reference downloads,
-build outputs, caches, Office lock files, internal planning/progress records and
-the inherited runner workflow. The bilingual README and this document describe
-the current scope; the publication checklist is brought up to date. The final
-round-17 review is copied to `docs/reviews/`, and its validation link is adjusted.
-Raw local build/test logs and local Git history are not uploaded.
+原作者署名、AGPL根许可、已引入代码的MIT声明、第三方资源许可和72份内核补丁均
+保留。清理后的源码排除构建缓存、引擎下载、个人资料、原始日志和内部进度文件；
+公开所需的审查报告单独保留并修复链接。按用户要求，剩余具有凭据外形的组件展示及单元测试
+样例统一替换为无效占位文字，相应测试期望同步替换，测试分支和边界条件不变。
+办公程序及其回归断言保持；组件样例清理未重跑整套测试。本地工作区和暂存内容不改写。
 
-延续上次公开清理规则，排除构建缓存、资料、临时锁文件、内部计划和上游机器
-发布流程。首页和本文更新双语说明，发布清单校正现状，最终审查报告单独公开。
-本地源码、暂存内容及原作者远程配置保持原样，公开仓库保留既有提交历史。
-
-Limited credential/privacy pattern checks and per-file Git blob/mode verification
-are not a comprehensive security audit. Existing public self-signed signing
-fixtures remain test-only: `CN=Ely Test Signer, O=Ely Office`, password `ely`.
-Their bytes are unchanged from the previous public import; never reuse them
-as production credentials. No binaries, tags or GitHub Release are published
-by this source update.
+Limited credential/path-pattern checks are not a comprehensive security audit.
+Existing public self-signed test fixtures retain their original bytes.
+They are for automated testing and must never be used as production credentials.
+Bundled component fonts and example images are upstream assets, not personal
+documents. Installer publisher IDs, signing and inherited upload scripts still
+require review before any binary release; do not run upstream publishing jobs.

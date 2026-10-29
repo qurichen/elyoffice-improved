@@ -342,6 +342,18 @@ impl WindowsWindowInner {
 
     fn handle_destroy_msg(&self, handle: HWND) -> Option<isize> {
         self.state.destroyed.set(true);
+        // 销毁前同步注销。
+        let closed = unsafe {
+            SendMessageW(
+                self.platform_window_handle,
+                WM_GPUI_CLOSE_ONE_WINDOW,
+                Some(WPARAM(self.validation_number)),
+                Some(LPARAM(handle.0 as isize)),
+            )
+        };
+        if closed.0 != 1 {
+            log::error!("closing window was not retired from the platform");
+        }
         unsafe { windows::Win32::System::Ole::RevokeDragDrop(handle).log_err() };
         // Its deferred report would find no window.
         self.state.callbacks.active_status_change.take();
@@ -356,15 +368,6 @@ impl WindowsWindowInner {
 
         if let Some(callback) = callback {
             callback();
-        }
-        unsafe {
-            PostMessageW(
-                Some(self.platform_window_handle),
-                WM_GPUI_CLOSE_ONE_WINDOW,
-                WPARAM(self.validation_number),
-                LPARAM(handle.0 as isize),
-            )
-            .log_err();
         }
         Some(0)
     }

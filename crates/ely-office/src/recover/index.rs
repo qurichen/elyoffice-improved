@@ -6,6 +6,9 @@ use std::{
 
 use super::Kept;
 
+mod write;
+pub(super) use write::{Pending, Writer};
+
 pub(super) fn read(dir: &Path) -> io::Result<Vec<Kept>> {
     let bytes = match std::fs::read(dir.join("recovery").join("index.json")) {
         Ok(bytes) => bytes,

@@ -217,22 +217,24 @@ pub trait Commands: Host<Engine = Lok> {
 
     /// Runs `commands` made from tab `tab`'s last read, as one.
     fn run_all_in(&mut self, tab: u64, commands: &[(&str, &[&str])], cx: &mut Context<Self>) {
-        let (Some(open), Some(at)) = (self.tab(tab), self.read_at(tab, cx)) else {
+        let (Some(_), Some(at)) = (self.tab(tab), self.read_at(tab, cx)) else {
             return log::warn!("{}: tab {tab} has no read to run from", Self::KIND.app.slug());
         };
-        log::info!("{}: runs {} commands from one read", Self::KIND.app.slug(), commands.len());
-        if let Err(error) = open.view.update(cx, |view, _| view.run_all_at(&at, commands)) {
-            self.engine_failed(&error.to_string(), cx);
-        }
+        self.run_all_on(tab, &at, commands, cx);
     }
 
-    /// Runs a numbered command against the read state `at`.
+    /// Runs a command against its original read.
     fn run_on(&mut self, tab: u64, at: &Doc, id: &str, values: &[&str], cx: &mut Context<Self>) {
+        self.run_all_on(tab, at, &[(id, values)], cx);
+    }
+
+    /// Runs an ordered batch against its original read.
+    fn run_all_on(&mut self, tab: u64, at: &Doc, commands: &[(&str, &[&str])], cx: &mut Context<Self>) {
         let Some(tab) = self.tab(tab) else {
             return;
         };
-        log::info!("{}: runs {id} at a read state", Self::KIND.app.slug());
-        if let Err(error) = tab.view.update(cx, |view, _| view.run_at(at, id, values)) {
+        log::info!("{}: runs {} commands at a read state", Self::KIND.app.slug(), commands.len());
+        if let Err(error) = tab.view.update(cx, |view, _| view.run_all_at(at, commands)) {
             self.engine_failed(&error.to_string(), cx);
         }
     }

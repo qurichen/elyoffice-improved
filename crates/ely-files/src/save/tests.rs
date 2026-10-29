@@ -1,14 +1,14 @@
 use super::*;
 use crate::Session;
 
+mod attachments;
+
 fn write(path: &Path, body: &str) {
     std::fs::write(path, body).expect("the fixture file writes");
 }
-
 fn read(path: &Path) -> String {
     std::fs::read_to_string(path).expect("the file reads")
 }
-
 #[test]
 fn an_atomic_save_lands_and_fingerprints() {
     let dir = tempfile::tempdir().expect("a temp dir");
@@ -18,7 +18,6 @@ fn an_atomic_save_lands_and_fingerprints() {
     assert_eq!(written, Fingerprint::of(&target).expect("the fingerprint"));
     assert_eq!(written.len, 4);
 }
-
 #[test]
 fn a_bare_relative_name_saves_and_probes() {
     let dir = tempfile::tempdir().expect("a temp dir");
@@ -30,7 +29,6 @@ fn a_bare_relative_name_saves_and_probes() {
     assert!(result.expect("the save lands").expect("the probe"));
     assert_eq!(read(&dir.path().join("report.md")), "0");
 }
-
 #[cfg(unix)]
 #[test]
 fn a_failed_write_keeps_the_original() {
@@ -46,7 +44,6 @@ fn a_failed_write_keeps_the_original() {
     assert!(failed.is_err());
     assert_eq!(read(&target), "original");
 }
-
 #[cfg(unix)]
 #[test]
 fn a_save_keeps_the_original_permissions() {
@@ -64,7 +61,6 @@ fn a_save_keeps_the_original_permissions() {
         & 0o777;
     assert_eq!(mode, 0o640);
 }
-
 #[test]
 fn paths_keep_spaces_cjk_and_case() {
     let dir = tempfile::tempdir().expect("a temp dir");
@@ -83,7 +79,6 @@ fn paths_keep_spaces_cjk_and_case() {
         .collect();
     assert_eq!(listed, vec![name.to_string()]);
 }
-
 #[test]
 fn a_backup_save_keeps_the_previous_file() {
     let dir = tempfile::tempdir().expect("a temp dir");
@@ -95,7 +90,6 @@ fn a_backup_save_keeps_the_previous_file() {
     assert_eq!(read(&backup), "previous");
     assert_eq!(backup, dir.path().join("net.md.bak"));
 }
-
 #[cfg(unix)]
 #[test]
 fn a_backup_never_truncates_or_follows_links() {
@@ -117,7 +111,6 @@ fn a_backup_never_truncates_or_follows_links() {
     assert_eq!(read(&other), "other");
     assert_eq!(read(&backup), "previous");
 }
-
 #[test]
 fn a_backup_name_fits_long_file_names() {
     let dir = tempfile::tempdir().expect("a temp dir");
@@ -130,7 +123,6 @@ fn a_backup_name_fits_long_file_names() {
     let len = backup.file_name().expect("a name").len();
     assert!(len <= 255, "the backup name fits: {len}");
 }
-
 #[test]
 fn an_export_is_independent_and_never_overwrites() {
     let dir = tempfile::tempdir().expect("a temp dir");
@@ -144,7 +136,6 @@ fn an_export_is_independent_and_never_overwrites() {
     assert_eq!(read(&editing), "session");
     assert!(export(&out, Some(editing.as_path()), b"%PDF2", 2).is_ok());
 }
-
 #[cfg(unix)]
 #[test]
 fn an_export_refuses_path_aliases_of_the_session() {
@@ -163,7 +154,6 @@ fn an_export_refuses_path_aliases_of_the_session() {
     assert!(export(&alias, Some(editing.as_path()), b"%PDF", 2).is_err());
     assert_eq!(read(&editing), "session");
 }
-
 #[test]
 fn an_import_copies_and_never_deletes() {
     let dir = tempfile::tempdir().expect("a temp dir");
@@ -179,7 +169,6 @@ fn an_import_copies_and_never_deletes() {
     assert_eq!(read(&first), "png-bytes");
     assert_eq!(read(&second), "png-bytes");
 }
-
 #[test]
 fn written_bytes_take_a_free_name() {
     let dir = tempfile::tempdir().expect("a temp dir");
@@ -188,7 +177,6 @@ fn written_bytes_take_a_free_name() {
     assert_ne!(first, second);
     assert_eq!((read(&first), read(&second)), ("one".into(), "two".into()));
 }
-
 #[test]
 fn a_numbered_import_name_fits_long_file_names() {
     let dir = tempfile::tempdir().expect("a temp dir");
@@ -201,7 +189,6 @@ fn a_numbered_import_name_fits_long_file_names() {
     assert!(len <= 255, "the numbered name fits: {len}");
     assert_eq!(read(&second), "png");
 }
-
 #[test]
 fn the_save_flow_checks_external_changes_first() {
     let dir = tempfile::tempdir().expect("a temp dir");
@@ -223,7 +210,6 @@ fn the_save_flow_checks_external_changes_first() {
         .expect("the overwrite lands");
     assert_eq!(session.state(), crate::SaveState::Saved);
 }
-
 #[test]
 fn the_save_flow_writes_and_confirms() {
     let dir = tempfile::tempdir().expect("a temp dir");
@@ -236,7 +222,6 @@ fn the_save_flow_writes_and_confirms() {
     assert_eq!(saved.backup, None);
     assert_eq!(session.state(), crate::SaveState::Saved);
 }
-
 #[test]
 fn external_change_detection_follows_the_fingerprint() {
     let dir = tempfile::tempdir().expect("a temp dir");
@@ -251,14 +236,12 @@ fn external_change_detection_follows_the_fingerprint() {
     let fresh = Session::new_file();
     assert!(!fresh.external_changed().expect("the check"));
 }
-
 #[test]
 fn local_volumes_are_atomic_capable() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let target = dir.path().join("local.md");
     assert!(atomic_capable(&target).expect("the probe"));
 }
-
 #[test]
 fn the_save_flow_keeps_a_backup_on_a_limited_volume() {
     let dir = tempfile::tempdir().expect("a temp dir");
@@ -510,3 +493,6 @@ fn overwrite_resolves_a_conflict_with_the_local_version() {
 
 #[cfg(windows)]
 mod long;
+
+#[cfg(windows)]
+mod failure;

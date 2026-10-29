@@ -6,6 +6,8 @@ use super::*;
 use crate::output::Format;
 
 mod encoding;
+mod delimiter;
+mod text_only;
 
 /// The active tab's kernel read, after its input.
 fn read<T>(

@@ -1,0 +1,41 @@
+{
+ "stories": [
+  "files/dragdropfiles",
+  "forms/fileinput-dropzone",
+  "forms/pathinput",
+  "media/imageupload",
+  "shell/dockbadge",
+  "shell/trayicon-traymenu",
+  "shell/windowdragregion",
+  "shell/windowresizeborder",
+  "terminal/terminal-terminaltabs-terminalsplit-terminaltoolbar-shellselector-terminalsearch-terminallink",
+  "theme/themeimporter-syntaxthemes"
+ ],
+ "windows": {
+  "shell/splashscreen": [
+   "shell-splash-window"
+  ],
+  "shell/aboutdialog": [
+   "shell-about-window"
+  ],
+  "shell/multiwindow-manager": [
+   "shell-managed-window"
+  ],
+  "shell/miniwindow-compactmode-pictureinpicture": [
+   "shell-mini-window",
+   "shell-pip-window"
+  ],
+  "shell/updatedialog": [
+   "shell-update-window"
+  ],
+  "shell/crashreporter": [
+   "shell-crash-window"
+  ],
+  "navigation/searchpalette-spotlightsearch-quicklauncher": [
+   "navigation-launcher"
+  ],
+  "theme/platform-style-iconthemeprovider-vibrancybackground": [
+   "theme-frosted-window"
+  ]
+ }
+}

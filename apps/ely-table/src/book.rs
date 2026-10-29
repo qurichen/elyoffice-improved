@@ -40,6 +40,7 @@ pub struct Extra {
     pub reading: bool,
     /// The kernel requests already taken.
     pub requests: u64,
+    pub(crate) filter_read: Option<(u64, ely_lok::RequestRead)>,
     /// The cell the rule belongs to, and the rule.
     pub rule: Option<(Spot, ely_lok::sheet::Validation)>,
     /// The cell whose rule was last asked for.

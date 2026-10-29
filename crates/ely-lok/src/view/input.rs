@@ -343,6 +343,7 @@ impl LokView {
         let Some(button) = lok_button(event.button) else {
             return;
         };
+        self.pointer_input.clear();
         window.focus(&self.focus, cx);
         self.right_at = (event.button == MouseButton::Right).then_some(event.position);
         if event.button == MouseButton::Left && (self.grab(event.position) || self.hold_border(event.position)) {
@@ -357,6 +358,9 @@ impl LokView {
             event.click_count,
             &event.modifiers,
         );
+        if event.button == MouseButton::Left {
+            self.pointer_input.press(self.sent);
+        }
     }
 
     pub(super) fn on_mouse_up(
@@ -392,6 +396,9 @@ impl LokView {
             event.click_count,
             &event.modifiers,
         );
+        if event.button == MouseButton::Left {
+            self.pointer_input.release(self.sent);
+        }
     }
 
     /// Ends a drag released outside the view.

@@ -1,0 +1,296 @@
+--- a/src/forms/text/mod.rs
++++ b/src/forms/text/mod.rs
+@@ -39,6 +39,8 @@
+ 
+ /// The last shaped text: one entry per hard line, with its display offset.
+ pub(crate) struct Layout {
++    pub text: SharedString,
++    pub masked: bool,
+     pub lines: Rc<[(usize, WrappedLine)]>,
+     pub bounds: Bounds<Pixels>,
+     pub line_height: Pixels,
+--- a/src/forms/text/element.rs
++++ b/src/forms/text/element.rs
+@@ -239,6 +239,8 @@
+         let caret_on = input.caret_on();
+         self.input.update(cx, |input, _| {
+             input.layout = Some(Layout {
++                text: input.text.clone().into(),
++                masked: input.masked,
+                 lines: lines.clone(),
+                 bounds,
+                 line_height,
+@@ -332,8 +334,9 @@
+             window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+                 if phase == DispatchPhase::Bubble && event.dragging() {
+                     input.update(cx, |input, cx| {
+-                        let at = input.offset_for_point(event.position);
+-                        input.select_to(at, cx);
++                        if let Some(at) = input.offset_for_point(event.position) {
++                            input.select_to(at, cx);
++                        }
+                     });
+                 }
+             });
+--- a/src/forms/text/geometry.rs
++++ b/src/forms/text/geometry.rs
+@@ -2,7 +2,7 @@
+ 
+ use gpui::{Bounds, Pixels, Point};
+ 
+-use super::{TextInput, element::selection_rects};
++use super::{Layout, TextInput, element::selection_rects};
+ 
+ impl TextInput {
+     /// The caret's box in window coordinates, once laid out.
+@@ -69,17 +69,21 @@
+         None
+     }
+ 
+-    /// The content offset nearest a window position.
+-    pub(crate) fn offset_for_point(&self, point: Point<Pixels>) -> usize {
+-        let Some(layout) = self.layout.as_ref() else {
+-            return 0;
+-        };
++    pub(super) fn current_layout(&self) -> Option<&Layout> {
++        self.layout.as_ref().filter(|layout| {
++            layout.text.as_ref() == self.text.as_str() && layout.masked == self.masked
++        })
++    }
++
++    /// Hit the current text.
++    pub(crate) fn offset_for_point(&self, point: Point<Pixels>) -> Option<usize> {
++        let layout = self.current_layout()?;
+         if layout.placeholder {
+-            return 0;
++            return Some(0);
+         }
+         let local = point - layout.bounds.origin + self.scroll;
+         if local.y < Pixels::ZERO {
+-            return 0;
++            return Some(0);
+         }
+         let mut top = Pixels::ZERO;
+         for (start, line) in layout.lines.iter() {
+@@ -89,10 +93,10 @@
+                 let index = match line.closest_index_for_position(inside, layout.line_height) {
+                     Ok(index) | Err(index) => index,
+                 };
+-                return self.content_offset(start + index.min(line.len()));
++                return Some(self.content_offset(start + index.min(line.len())));
+             }
+             top += height;
+         }
+-        self.text.len()
++        Some(self.text.len())
+     }
+ }
+--- a/src/forms/text/actions.rs
++++ b/src/forms/text/actions.rs
+@@ -157,7 +157,7 @@
+     fn vertical(&self, down: bool) -> usize {
+         let caret = self.cursor();
+         let (Some(layout), Some(at)) = (
+-            self.layout.as_ref(),
++            self.current_layout(),
+             self.position_for(self.display_offset(caret)),
+         ) else {
+             return caret;
+@@ -172,6 +172,7 @@
+             return 0;
+         }
+         self.offset_for_point(layout.bounds.origin + target - self.scroll)
++            .expect("a checked layout has a character hit")
+     }
+ 
+     fn up(&mut self, _: &Up, _: &mut Window, cx: &mut Context<Self>) {
+@@ -322,7 +323,7 @@
+             return;
+         }
+         window.focus(&self.focus, cx);
+-        let at = self.offset_for_point(event.position);
++        let Some(at) = self.offset_for_point(event.position) else { return };
+         match event.click_count {
+             2 => {
+                 let word = edit::word_at(&self.text, at);
+@@ -354,7 +355,7 @@
+             return;
+         }
+         window.focus(&self.focus, cx);
+-        let at = self.offset_for_point(event.position);
++        let Some(at) = self.offset_for_point(event.position) else { return };
+         let held =
+             !self.selection.is_empty() && (self.selection.start..=self.selection.end).contains(&at);
+         if !held {
+@@ -363,8 +364,9 @@
+     }
+ 
+     fn mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+-        if self.selecting && event.dragging() {
+-            let at = self.offset_for_point(event.position);
++        if self.selecting && event.dragging()
++            && let Some(at) = self.offset_for_point(event.position)
++        {
+             self.select_to(at, cx);
+         }
+     }
+--- a/src/forms/text/ime.rs
++++ b/src/forms/text/ime.rs
+@@ -142,7 +142,7 @@
+         _: &mut Window,
+         _: &mut Context<Self>,
+     ) -> Option<usize> {
+-        self.layout.as_ref()?;
+-        Some(to_utf16(&self.text, self.offset_for_point(point)))
++        self.offset_for_point(point)
++            .map(|offset| to_utf16(&self.text, offset))
+     }
+ }
+--- a/src/documents/blocks/span.rs
++++ b/src/documents/blocks/span.rs
+@@ -73,7 +73,7 @@
+         Some(Spot {
+             key,
+             field,
+-            at: input.offset_for_point(position),
++            at: input.offset_for_point(position)?,
+         })
+     }
+ 
+--- a/src/documents/document/point.rs
++++ b/src/documents/document/point.rs
+@@ -216,7 +216,10 @@
+         };
+         let input = open.input.read(cx);
+         let pressed = match position {
+-            Some(position) => input.offset_for_point(position),
++            Some(position) => match input.offset_for_point(position) {
++                Some(at) => at,
++                None => return,
++            },
+             None => input.text().len(),
+         };
+         // A cell's typed pipes shift its bytes.
+--- a/src/forms/tests/mod.rs
++++ b/src/forms/tests/mod.rs
+@@ -3,6 +3,7 @@
+ mod dates;
+ mod other;
+ mod popup;
++mod relayout;
+ mod stale;
+ mod structure;
+ mod tags;
+--- /dev/null
++++ b/src/forms/tests/relayout.rs
+@@ -0,0 +1,110 @@
++use gpui::{EntityInputHandler, MouseButton, MouseDownEvent, PlatformInput, TestAppContext};
++
++use super::{focus, open};
++
++#[gpui::test]
++fn an_external_clear_has_no_character_hit_in_the_old_frame(cx: &mut TestAppContext) {
++    let (fields, cx) = open(1, false, cx);
++    let field = &fields[0];
++    field.update(cx, |input, cx| input.set_text("abcdefghijklmnop", cx));
++    cx.run_until_parked();
++    let hit = field.read_with(cx, |input, _| input.bounds_for(11)).unwrap().origin;
++    cx.update(|window, cx| field.update(cx, |input, cx| {
++        input.set_text("", cx);
++        assert_eq!(input.character_index_for_point(hit, window, cx), None);
++        assert_eq!(input.selection(), 0..0);
++    }));
++}
++
++#[gpui::test]
++fn a_replacement_never_reuses_an_old_ascii_offset_inside_unicode(cx: &mut TestAppContext) {
++    let (fields, cx) = open(1, false, cx);
++    let field = &fields[0];
++    field.update(cx, |input, cx| input.set_text("abcdefgh", cx));
++    cx.run_until_parked();
++    let hit = field.read_with(cx, |input, _| input.bounds_for(1)).unwrap().origin;
++    cx.update(|window, cx| field.update(cx, |input, cx| {
++        input.set_text("😀", cx);
++        assert_eq!(input.character_index_for_point(hit, window, cx), None);
++        assert_eq!(input.selection(), 4..4);
++    }));
++}
++
++#[gpui::test]
++fn typing_a_replacement_does_not_hit_the_previous_text(cx: &mut TestAppContext) {
++    let (fields, cx) = open(1, false, cx);
++    let field = &fields[0];
++    field.update(cx, |input, cx| input.set_text("abcdefghijklmnop", cx));
++    cx.run_until_parked();
++    let hit = field.read_with(cx, |input, _| input.bounds_for(11)).unwrap().origin;
++    cx.update(|window, cx| field.update(cx, |input, cx| {
++        input.select(0..16, cx);
++        input.insert("中", cx);
++        assert_eq!(input.character_index_for_point(hit, window, cx), None);
++        assert_eq!(input.selection(), 3..3);
++    }));
++}
++
++#[gpui::test]
++fn composition_replacement_does_not_hit_the_previous_text(cx: &mut TestAppContext) {
++    let (fields, cx) = open(1, false, cx);
++    let field = &fields[0];
++    field.update(cx, |input, cx| input.set_text("abcdefghijklmnop", cx));
++    cx.run_until_parked();
++    let hit = field.read_with(cx, |input, _| input.bounds_for(11)).unwrap().origin;
++    cx.update(|window, cx| field.update(cx, |input, cx| {
++        input.replace_and_mark_text_in_range(Some(0..16), "文", None, window, cx);
++        assert_eq!(input.character_index_for_point(hit, window, cx), None);
++        assert_eq!(input.selection(), 3..3);
++    }));
++}
++
++fn click_after_clear(button: MouseButton, clicks: usize, cx: &mut TestAppContext) {
++    let (fields, cx) = open(1, false, cx);
++    let field = &fields[0];
++    focus(field, cx);
++    field.update(cx, |input, cx| input.set_text("abcdefghijklmnop", cx));
++    cx.run_until_parked();
++    let hit = field.read_with(cx, |input, _| input.bounds_for(11)).unwrap().origin;
++    cx.update(|window, cx| {
++        field.update(cx, |input, cx| input.set_text("", cx));
++        window.dispatch_event(PlatformInput::MouseDown(MouseDownEvent {
++            button, position: hit, click_count: clicks, ..Default::default()
++        }), cx);
++        assert_eq!(field.read(cx).selection(), 0..0);
++    });
++    cx.simulate_keystrokes("end");
++    assert_eq!(field.read_with(cx, |input, _| input.selection()), 0..0);
++}
++
++#[gpui::test]
++fn a_left_press_after_clear_cannot_create_an_out_of_range_caret(cx: &mut TestAppContext) {
++    click_after_clear(MouseButton::Left, 1, cx);
++}
++
++#[gpui::test]
++fn a_right_press_after_clear_cannot_create_an_out_of_range_caret(cx: &mut TestAppContext) {
++    click_after_clear(MouseButton::Right, 1, cx);
++}
++
++#[gpui::test]
++fn a_triple_press_after_clear_cannot_slice_the_old_line(cx: &mut TestAppContext) {
++    click_after_clear(MouseButton::Left, 3, cx);
++}
++
++#[gpui::test]
++fn the_repainted_text_has_live_unicode_hit_testing(cx: &mut TestAppContext) {
++    let (fields, cx) = open(1, false, cx);
++    let field = &fields[0];
++    field.update(cx, |input, cx| input.set_text("old", cx));
++    cx.run_until_parked();
++    field.update(cx, |input, cx| input.set_text("a中😀z", cx));
++    cx.run_until_parked();
++    for (byte, utf16) in [(1, 1), (4, 2), (8, 4)] {
++        let hit = field.read_with(cx, |input, _| input.bounds_for(byte)).unwrap().origin;
++        let found = cx.update(|window, cx| field.update(cx, |input, cx| {
++            input.character_index_for_point(hit, window, cx)
++        }));
++        assert_eq!(found, Some(utf16));
++    }
++}

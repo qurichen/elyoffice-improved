@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File, OpenOptions},
-    io::{self, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
     panic,
     path::{Path, PathBuf},
     sync::OnceLock,
@@ -38,18 +38,27 @@ const LOG_CAP: u64 = 8 * 1024 * 1024;
 
 /// Keeps a long log's newer half, from a whole line.
 fn trimmed(path: &Path, cap: u64) -> std::io::Result<()> {
-    let length = match fs::metadata(path) {
-        Ok(meta) => meta.len(),
+    let mut file = match File::open(path) {
+        Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
     };
+    let length = file.metadata()?.len();
     if length <= cap {
         return Ok(());
     }
-    let bytes = fs::read(path)?;
-    let tail = &bytes[(length - cap / 2) as usize..];
+    let tail = log_tail(&mut file, length, cap)?;
+    drop(file);
+    fs::write(path, tail)
+}
+
+fn log_tail(file: &mut (impl Read + Seek), length: u64, cap: u64) -> io::Result<Vec<u8>> {
+    file.seek(SeekFrom::Start(length.saturating_sub(cap / 2)))?;
+    let mut tail = Vec::new();
+    file.take(cap / 2).read_to_end(&mut tail)?;
     let whole = tail.iter().position(|b| *b == b'\n').map_or(tail.len(), |n| n + 1);
-    fs::write(path, &tail[whole..])
+    tail.drain(..whole);
+    Ok(tail)
 }
 
 /// Logs to stderr and a file. `ELY_LOG` sets level.
@@ -83,6 +92,43 @@ pub fn init_in(app: AppId, dir: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod trim_tests {
+    #[test]
+    fn log_tail_reads_only_its_budget_even_when_the_log_is_large() {
+        use std::io::{self, Read, Seek, SeekFrom};
+        struct Source { length: u64, position: u64, read: usize }
+        impl Read for Source {
+            fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+                let count = bytes.len().min(self.length.saturating_sub(self.position) as usize);
+                bytes[..count].fill(b'x');
+                for (n, byte) in bytes[..count].iter_mut().enumerate() {
+                    if (self.position + n as u64) % 16 == 15 { *byte = b'\n'; }
+                }
+                self.position += count as u64;
+                self.read += count;
+                Ok(count)
+            }
+        }
+        impl Seek for Source {
+            fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
+                let SeekFrom::Start(at) = from else { panic!("only absolute seeks") };
+                self.position = at;
+                Ok(at)
+            }
+        }
+        let mut source = Source { length: 1024 * 1024 * 1024, position: 0, read: 0 };
+        let tail = super::log_tail(&mut source, 1024 * 1024 * 1024, 1024).expect("tail");
+        assert_eq!(source.read, 512);
+        assert_eq!(tail.len(), 496);
+        assert!(tail.ends_with(b"\n"));
+    }
+
+    #[test]
+    fn a_shortened_log_and_zero_budget_do_not_panic() {
+        let mut source = std::io::Cursor::new(b"short\n");
+        assert!(super::log_tail(&mut source, 1024, 16).expect("concurrent truncation").is_empty());
+        assert!(super::log_tail(&mut source, 6, 0).expect("zero budget").is_empty());
+    }
+
     #[test]
     fn a_long_log_keeps_its_newer_half_from_a_line() {
         let dir = tempfile::tempdir().unwrap();

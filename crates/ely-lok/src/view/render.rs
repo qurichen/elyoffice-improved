@@ -247,8 +247,9 @@ impl LokView {
         }
     }
 
-    /// All its images, for a closing tab to free.
+    /// 关闭视图并交出图像。
     pub fn retire_all(&mut self) -> ely_gpui_component::primitives::Retired {
+        drop(self.watching.take());
         self.retire_tiles();
         std::mem::take(&mut self.retired)
     }

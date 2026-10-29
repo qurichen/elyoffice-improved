@@ -8,6 +8,9 @@ use std::{
 
 use crate::AppId;
 
+#[cfg(windows)]
+mod windows;
+
 /// Where `app` sits for an install laid out like `exe`'s.
 pub(crate) fn beside(exe: &Path, app: AppId) -> Vec<PathBuf> {
     let file = format!("{}{}", app.slug(), std::env::consts::EXE_SUFFIX);
@@ -89,13 +92,10 @@ pub fn open(app: AppId, files: &[PathBuf]) -> io::Result<()> {
 }
 
 /// Opens `path` in the default app; a refusal says why.
+#[cfg(not(windows))]
 pub fn open_default(path: &Path) -> io::Result<()> {
     let mut command = if cfg!(target_os = "macos") {
         Command::new("open")
-    } else if cfg!(windows) {
-        let mut start = Command::new("cmd");
-        start.args(["/C", "start", ""]);
-        start
     } else {
         Command::new("xdg-open")
     };
@@ -107,6 +107,9 @@ pub fn open_default(path: &Path) -> io::Result<()> {
     log::info!("apps: the system opened an output");
     Ok(())
 }
+
+#[cfg(windows)]
+pub use windows::open_default;
 
 #[cfg(test)]
 mod tests {

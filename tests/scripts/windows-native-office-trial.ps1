@@ -19,6 +19,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 Add-Type -Path "$PSScriptRoot/windows-native-ui.cs"
 Add-Type -Path "$PSScriptRoot/windows-trial-job.cs"
 . "$PSScriptRoot/windows-native-office-content.ps1"
+. "$PSScriptRoot/windows-native-log.ps1"
 $repo=Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $suite=Join-Path $OutputDirectory ('native-offices-'+[guid]::NewGuid().ToString('N').Substring(0,8))
 New-Item -ItemType Directory -Path $suite | Out-Null
@@ -30,8 +31,7 @@ $marker='Round13 中文表格 😀'
 $second='Cancel keeps this draft 中文'
 
 function Log-Text {
- if(Test-Path -LiteralPath $script:log){return Get-Content -LiteralPath $script:log -Raw}
- return ''
+ return Read-ElyNativeLog $script:log
 }
 function Count-Log([string]$Pattern) { return [regex]::Matches((Log-Text),$Pattern).Count }
 function Wait-Until([scriptblock]$Check,[int]$Seconds=25) {

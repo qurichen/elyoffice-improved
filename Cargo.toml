@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["apps/*", "crates/*"]
+members = ["apps/*", "crates/*", "vendor/ely-gpui-component"]
 # Upstream sources and their builds keep their own manifests.
 exclude = ["engines", "reference"]
 
@@ -71,3 +71,6 @@ all = { level = "warn", priority = -1 }
 [patch.crates-io]
 gpui-pre = { path = "vendor/gpui-pre" }
 gpui-pre-windows = { path = "vendor/gpui-pre-windows" }
+
+[patch."https://git.zacharyzhang.com/ZacharyZhang-NY/Ely-GPUI-Components"]
+ely-gpui-component = { path = "vendor/ely-gpui-component" }

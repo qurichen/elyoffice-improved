@@ -4,7 +4,7 @@ use ely_gpui_component::{
     buttons::{Button, ButtonVariant, SegmentedControl},
     data_display::DescriptionList,
     feedback::InlineMessage,
-    forms::{Choice, Select},
+    forms::{Choice, Select, Switch},
     layout::ScrollArea,
     overlays::Dialog as Card,
     primitives::Severity,
@@ -52,7 +52,7 @@ fn separator_key(separator: char) -> &'static str {
 }
 
 /// One column: its kind above its first cells.
-fn column(this: &Entity<Book>, at: usize, kind: Column, rows: &[Vec<String>], cx: &App) -> gpui::Div {
+fn column(this: &Entity<Book>, at: usize, kind: Column, rows: &[Vec<String>], off: bool, cx: &App) -> gpui::Div {
     let label = |key: &str| Book::text(cx, key, &[]);
     let picking = this.clone();
     let kinds = Select::new(
@@ -64,12 +64,15 @@ fn column(this: &Entity<Book>, at: usize, kind: Column, rows: &[Vec<String>], cx
     )
     .label(Book::text(cx, "table.import.kind_of", &[("n", &(at + 1).to_string())]))
     .selected(COLUMNS.iter().position(|each| *each == kind).expect("listed").to_string())
+    .disabled(off)
     .on_change(move |value, _, cx| {
         let Ok(index) = value.parse::<usize>() else {
             return;
         };
         edit(&picking, cx, |dialog, _, _| {
-            pending_of(dialog).how.columns[at] = COLUMNS[index];
+            let pending = pending_of(dialog);
+            if pending.text_only || pending.reading { return; }
+            if let Some(column) = pending.how.columns.get_mut(at) { *column = COLUMNS[index]; }
         })
     });
     let fg = cx.theme().colors.fg;
@@ -90,7 +93,8 @@ pub fn import_dialog(
     cx: &App,
 ) -> Card {
     let label = |key: &str| Book::text(cx, key, &[]);
-    let how = &pending.how;
+    let options = pending.import_options();
+    let how = &options;
     let picking = this.clone();
     let encoding = Select::new(
         "table-import-encoding",
@@ -135,11 +139,20 @@ pub fn import_dialog(
         .item(label("table.import.encoding"), div().w_full().max_w_48().child(encoding))
         .item(label("table.import.separator"), div().w_full().max_w_48().child(separator))
         .item(label("table.import.quote"), quote);
+    let picking = this.clone();
+    let text_only = Switch::new("table-import-text-only", pending.text_only)
+        .label(label("table.import.text_only"))
+        .on_change(move |on, _, cx| {
+            edit(&picking, cx, |dialog, _, _| pending_of(dialog).text_only = on);
+        });
+    let text_hint = pending.text_only.then(|| {
+        InlineMessage::new(Severity::Info, label("table.import.text_only_hint"))
+    });
     let columns = how
         .columns
         .iter()
         .enumerate()
-        .map(|(at, kind)| column(&this, at, *kind, &pending.rows, cx));
+        .map(|(at, kind)| column(&this, at, *kind, &pending.rows, pending.text_only || pending.reading, cx));
     // As wide as its columns, so it scrolls.
     let shown = how.columns.len() as f32;
     let row = div().w(rems(shown * 8.5)).flex().gap_2().pb_2().children(columns);
@@ -156,6 +169,8 @@ pub fn import_dialog(
         dismiss,
     )
     .child(choices)
+    .child(text_only)
+    .children(text_hint)
     .children(broken)
     .child(preview)
     .action(ely_office::cancel(cx))

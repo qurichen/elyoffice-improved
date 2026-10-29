@@ -19,10 +19,23 @@ ely-gpui-component.workspace = true
 ely-lok = { workspace = true, features = ["view"] }
 ely-office.workspace = true
 gpui.workspace = true
+futures.workspace = true
 jiff.workspace = true
 log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+ureq.workspace = true
 ely-platform.workspace = true
 ely-ui.workspace = true
+
+[dependencies.keyring]
+version = "3"
+features = ["apple-native", "windows-native"]
+
+[target.'cfg(target_os = "linux")'.dependencies.keyring]
+version = "3"
+features = ["linux-native-sync-persistent"]
 
 [dev-dependencies]
 ely-ui = { workspace = true, features = ["test-support"] }

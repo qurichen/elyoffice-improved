@@ -1,0 +1,120 @@
+name: Showcase
+
+# Moves the site's showcase pin to the Gitea catalog's main once its checks pass, then deploys.
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Build and deploy even if the pin is current
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: showcase
+  cancel-in-progress: false
+
+env:
+  CATALOG: ZacharyZhang-NY/Ely-GPUI-Showcases
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.head.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - id: head
+        env:
+          API: ${{ github.server_url }}/api/v1/repos/${{ env.CATALOG }}
+          FORCE: ${{ inputs.deploy }}
+        run: |
+          head=$(curl -fsS "$API/branches/main" | jq -r .commit.id)
+          pinned=$(tr -d '[:space:]' < frontend/showcase.lock)
+          if [ "$head" = "$pinned" ]; then
+            echo "showcase: pinned at ${head:0:7}, the catalog's main"
+            [ "$FORCE" = "true" ] && echo "commit=$head" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          status=$(curl -fsS "$API/commits/$head/status")
+          total=$(echo "$status" | jq .total_count)
+          state=$(echo "$status" | jq -r .state)
+          if [ "$total" -eq 0 ] || [ "$state" = "pending" ]; then
+            echo "showcase: ${head:0:7}'s checks have not finished; next run looks again"
+            [ "$FORCE" = "true" ] && echo "commit=$pinned" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$state" != "success" ]; then
+            echo "::error::showcase: ${head:0:7} failed its catalog checks ($state); the pin stays at ${pinned:0:7}"
+            exit 1
+          fi
+          echo "showcase: ${pinned:0:7} -> ${head:0:7}"
+          echo "commit=$head" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: check
+    if: needs.check.outputs.commit != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      COMMIT: ${{ needs.check.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: web
+      - name: wasm-bindgen at Cargo.lock's version
+        run: |
+          version=$(sed -n '/^name = "wasm-bindgen"$/{n;s/^version = "\(.*\)"$/\1/p;}' Cargo.lock)
+          echo "WASM_BINDGEN=wasm-bindgen@$version" >> "$GITHUB_ENV"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: ${{ env.WASM_BINDGEN }}
+      - name: wasm-opt
+        run: |
+          curl -fsSL https://github.com/WebAssembly/binaryen/releases/download/version_132/binaryen-version_132-x86_64-linux.tar.gz | tar -xz -C "$RUNNER_TEMP"
+          echo "$(ls -d "$RUNNER_TEMP"/binaryen-*/)bin" >> "$GITHUB_PATH"
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: echo "$COMMIT" > frontend/showcase.lock
+      - run: scripts/web.sh frontend/public/gallery
+        env:
+          ELY_GALLERY_ASSETS: https://elygpui.com/gallery/assets/
+      - working-directory: frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm test
+          pnpm build
+          pnpm run deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Commit the pin
+        run: |
+          git config user.name 'gitea-actions'
+          git config user.email 'actions@git.zacharyzhang.com'
+          git add frontend/showcase.lock
+          git diff --cached --quiet && exit 0
+          git commit -m "Site · Showcase: pin Ely-GPUI-Showcases at ${COMMIT:0:7}"
+          for attempt in 1 2 3; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            sleep 5
+          done
+          exit 1

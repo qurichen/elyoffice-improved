@@ -17,6 +17,7 @@ mod settings;
 mod show;
 mod table;
 mod tools;
+mod translation;
 mod tree;
 mod tree_ops;
 mod tree_places;
@@ -166,6 +167,7 @@ fn catalogs() -> (Catalog, Catalog) {
         .chain(doc::EN)
         .chain(refs::EN)
         .chain(tools::EN)
+        .chain(translation::EN)
         .chain(table::EN)
         .chain(calc::EN)
         .chain(data::EN)
@@ -190,6 +192,7 @@ fn catalogs() -> (Catalog, Catalog) {
         .chain(doc::ZH_CN)
         .chain(refs::ZH_CN)
         .chain(tools::ZH_CN)
+        .chain(translation::ZH_CN)
         .chain(table::ZH_CN)
         .chain(calc::ZH_CN)
         .chain(data::ZH_CN)

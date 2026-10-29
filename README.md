@@ -1,48 +1,33 @@
-# ElyOffice Improved
+# ElyOffice Improved / 离线办公改进分支
 
-ElyOffice 的实验性改进分支 / An experimental ElyOffice derivative.
+Experimental source fork of ElyOffice, preserving the original authorship and
+AGPL-3.0-or-later licence. This is not an official upstream release.
+保留原作者署名与AGPL许可的实验性源码改进分支，不是原作者的官方发行版。
 
-## 为什么关注这个项目 / Why this project
+## Latest source update / 最新源码 — 2026-10-29
 
-- **开源、可审查、可定制**：遵循 AGPL-3.0-or-later，可研究、修改并按许可要求再分发。
-- **离线优先、文件由你掌握**：核心本地文档处理不依赖云端账号，不要求把正文交给云端服务。
-- **面向常用办公格式**：文字、表格和演示使用 LibreOfficeKit，支持 DOCX/XLSX/PPTX 与 ODF；支持格式不等于完整兼容所有功能。
-- **原生桌面界面**：基于 Rust 与 GPUI，可从源码调整界面和本地工作流。
-- **改进有据可查**：保留补丁、合成测试样本和验证范围，重点修复 Windows 运行、文档往返及保存恢复问题。
+Includes work through round 26 and the latest source audit: safer Windows file
+opening and attachment names, macro detection, bounded logs and fewer event
+copies; recovery/lifecycle protections; text-preserving CSV import; opt-in
+selected-text translation with user-configured model connections.
 
-- **Open and adaptable**: inspect, modify and redistribute under AGPL-3.0-or-later and applicable third-party licences.
-- **Offline-first, user-controlled files**: core local document workflows need no cloud account and do not require sending document contents to a cloud service.
-- **Familiar office formats**: LibreOfficeKit powers DOCX/XLSX/PPTX and ODF workflows; format support does not mean complete feature compatibility.
-- **Native desktop UI**: Rust and GPUI provide a source-customizable desktop interface and local workflow.
-- **Evidence-backed improvements**: patches, synthetic fixtures and scoped validation document Windows, document-roundtrip and save/recovery repairs.
+已同步至第26轮及最新源码审计：修复特殊文件名、附件边界和宏漏检，减少日志和
+事件处理的内存浪费，完善保存恢复与关闭保护，增加CSV按文本保留和默认关闭的
+选区翻译。文件仍由本地文档引擎处理；翻译只有明确请求时才发送预览选区。
 
-目前为源码预览，不是安装包，也不保证完全替代 Microsoft Office。
-尚未证明比其他办公软件更快或更省内存；完整交互、恢复和安装验收仍未完成。
-This is a source preview, not an installer or a claim of full Microsoft Office parity.
-No speed or memory advantage is claimed; complete interactive, recovery and installer validation remains open.
+Latest audit: **501 distinct Rust tests + 15 website tests passed**, with
+independent R1 review. Full-workspace checking remains blocked by missing MuPDF
+build libraries; the other 12 first-party members passed all-targets checking.
+No installer is provided. Real-model translation quality and general Office
+compatibility are not established by fixture tests.
 
-发布范围、清理事项与原作者信息 / Publication scope, hygiene and attribution:
-[PUBLICATION.md](PUBLICATION.md).
+最近审计501项Rust和15项官网测试通过，独立R1审查通过。全工作区检查受MuPDF
+编译依赖缺失限制，其余12个自有成员检查通过；本次不提供安装包，不把测试服务
+结果写成真实模型质量或全面Office兼容性承诺。
 
-
-## 最新更新 / Latest update — 2026-10-25
-
-已整合截至第17轮的累计改进：72项内核补丁、保存恢复保护、Windows高缩放与
-深层资料目录修复、上游办公核心补全，以及原文档/选区绑定的安全命令调度。
-第17轮224项测试通过，三应用及工作进程优化构建、表格/演示原生保存重开通过，
-独立审查R1通过。应用和工作进程需配套更新。
-
-Cumulative improvements through round 17 include 72 engine patches, safer
-save/recovery, Windows DPI and deep-profile repairs, selected upstream office-core
-backports, and commands bound to their original document/context. Round 17 passed
-224 distinct tests, optimized app/worker builds, bounded Table/Show native save
-and reopen checks, and independent R1 review. Update apps and worker together.
-
-本次是源码更新，暂不提供安装包。已知限制及关闭窗口后的保留诊断见
-[发布说明 / Publication notes](PUBLICATION.md) 和
-[第17轮验证 / Round 17 validation](docs/windows-validation-round17.md)。
-This is a source update; no installer is provided. Known limits and retained
-window-close diagnostics are documented in the linked records.
+See [publication notes / 发布说明](PUBLICATION.md),
+[audit report / 审计记录](docs/source-audit-20261028.zh-CN.md), and
+[roadmap / 改进路线](docs/optimization-path-after-round18.zh-CN.md).
 
 ---
 
@@ -110,6 +95,71 @@ while edits and page reordering invalidate the old request. Apps and the worker
 must be updated together for the new selection-context check.
 See the [round 17 validation record](docs/windows-validation-round17.md) for
 the tested scope and remaining extension, undo, performance and layout work.
+
+[Round 18](docs/windows-validation-round18.md) carries the original read state
+through Table's sort, standard filter, text-to-columns and column-button menus.
+Selection or sheet changes invalidate old confirmations. A shared explicit-read
+batch keeps column-menu positioning and mutation together; it does not provide
+atomic rollback. Filter menus keep their first client request context while
+waiting for the paired pointer release; switching sheets during that wait
+invalidates the request. Slow and quick clicks retain their original target.
+This round's validation and retained diagnostics are recorded separately from
+earlier test totals.
+
+[Round 26](docs/windows-validation-round26.md) adds opt-in English/Chinese
+selection translation in ElyDoc. Users configure a Chat Completions URL, model
+and optional system-stored API key. Only the previewed selection is sent on
+request; results can be previewed and copied. Local endpoints may relay to cloud
+services. This is independent of the unfinished ElyAgent; it does not edit the
+document. Protocol and UI fixtures do not establish real-model translation quality.
+
+[Round 25](docs/windows-validation-round25.md) adds an optional **Keep all fields
+as text** CSV import mode. It preserves numeric and date-like spellings across
+import and save, covers columns discovered beyond the preview, and restores prior
+column choices when switched off. Ordinary numeric import remains the default.
+Per-column conversion differences and risk previews remain roadmap work.
+
+[Round 24](docs/windows-validation-round24.md) fixes the Windows native validation
+reader when a growing log produces multiple raw output parts. Parts are joined
+without inserted characters, while truncation and changes to the previous log
+prefix remain errors. This updates the verification tools; application binaries
+are reused. The earlier native failure remains recorded without a retrospective
+claim that its unique cause is proven.
+
+[Round 23](docs/windows-validation-round23.md) corrects Table's default CSV
+delimiter inference for quoted fields, multiline records and encoded text.
+Quoted punctuation is excluded in later columns as well as the first; TSV file
+extensions keep their existing meaning. Import previews remain available for
+ambiguous files; this is not a strict no-conversion import mode.
+
+[Round 22](docs/windows-validation-round22.md) addresses a reproduced text-input
+abort caused by using an old layout to position the caret in replacement text.
+Character hits now require the text and masking state that were actually shaped;
+drag and Markdown consumers preserve that validity check. Existing pre-frame IME
+candidate positioning remains available. The pinned component source, licenses,
+focused regressions, and a portable upstream patch are included in the repository.
+
+[Round 21](docs/windows-validation-round21.md) keeps recovery-point order across
+equal or backward clocks, avoids reusing unrelated metadata, and coordinates
+point writes with maintenance and discard. On clock correction the point time
+can be a logical ordering time; the last-success time remains the supplied wall time.
+Its native validation retains the text-input abort before the planned crash
+injection. Round 22 addresses the deterministically reproduced layout mismatch;
+the initiator of the earlier Minimize event remains unidentified.
+
+[Round 20](docs/windows-validation-round20.md) fences recovery-index writes during
+shutdown and keeps the crash marker when the final index cannot be committed.
+Closing a LOK view also cancels its event watch before its document is released.
+Validation separates recovery storage and process-termination tests, Windows save
+failure controls, application regressions, and native-window recovery evidence.
+
+[Round 19](docs/windows-validation-round19.md) synchronizes native Windows window
+retirement with the refresh registry before destruction completes. Redraw errors
+remain visible; the scope and native before/after evidence are recorded separately.
+
+The [post-round-18 optimization path](docs/optimization-path-after-round18.zh-CN.md)
+maps seven office projects to proposed work and acceptance gates. It is a roadmap,
+not a record of completed integrations or a new release.
 
 Offline-first desktop apps in Rust and GPUI. Files stay in your folders; no account, no cloud service.
 

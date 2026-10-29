@@ -26,6 +26,8 @@ mod input;
 mod lane;
 mod off;
 mod panes;
+mod pointer;
+pub use pointer::RequestRead;
 mod reads;
 mod render;
 mod zoom;
@@ -137,6 +139,7 @@ pub struct LokView {
     picked: usize,
     marked: Option<ime::Marked>,
     dragging: bool,
+    pointer_input: pointer::Pointer,
     edge: edge::Edge,
     grip: Option<handles::Grip>,
     borders: borders::Borders,
@@ -230,6 +233,7 @@ impl LokView {
             picked: 0,
             marked: None,
             dragging: false,
+            pointer_input: pointer::Pointer::default(),
             edge: Default::default(),
             grip: None,
             borders: Default::default(),

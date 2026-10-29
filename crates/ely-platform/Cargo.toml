@@ -39,7 +39,7 @@ security-framework.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 clipboard-win = "5.4"
-windows-sys.workspace = true
+windows-sys = { workspace = true, features = ["Win32_System_Registry"] }
 windows.workspace = true
 
 [target.'cfg(unix)'.dependencies]

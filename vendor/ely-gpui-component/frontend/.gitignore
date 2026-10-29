@@ -1,0 +1,8 @@
+node_modules
+dist
+public/gallery
+.wrangler
+test-results
+playwright-report
+public/showcase
+src/showcase.json

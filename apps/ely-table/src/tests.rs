@@ -403,6 +403,7 @@ fn a_delete_stays_with_its_workbook() {
 mod analysis;
 mod aids;
 mod data;
+mod data_context;
 mod menu;
 mod merges;
 mod names;
